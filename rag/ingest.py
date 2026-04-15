@@ -8,6 +8,11 @@ RAG 知识库入库脚本
 流程：
   读取 md 文件 → 按段落切分 → Embedding（转成向量） → 存入 Qdrant
 
+使用 fastembed 替代 sentence-transformers：
+  - 不依赖 PyTorch，安装轻量
+  - 使用 ONNX 运行模型，速度快
+  - 模型：BAAI/bge-small-zh-v1.5（专为中文优化，512维）
+
 运行方法：
   venv\\Scripts\\activate
   python rag/ingest.py
@@ -17,18 +22,18 @@ import os
 import glob
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct
-from sentence_transformers import SentenceTransformer
+from fastembed import TextEmbedding
 
 # ── 配置 ─────────────────────────────────────────────────────
 QDRANT_URL = "http://localhost:6333"
 COLLECTION_NAME = "travel_knowledge"   # Qdrant 里的"表名"
-EMBEDDING_MODEL = "shibing624/text2vec-base-chinese"  # 中文 Embedding 模型
-CHUNK_SIZE = 300  # 每个文本块最大字符数
+EMBEDDING_MODEL = "BAAI/bge-small-zh-v1.5"  # 中文 Embedding 模型（fastembed 内置支持）
+VECTOR_DIM = 512   # bge-small-zh-v1.5 的向量维度
+CHUNK_SIZE = 300   # 每个文本块最大字符数
 
 # ── 初始化 ───────────────────────────────────────────────────
-print("正在加载 Embedding 模型（首次运行会自动下载，约400MB）...")
-model = SentenceTransformer(EMBEDDING_MODEL)
-VECTOR_DIM = model.get_sentence_embedding_dimension()  # 向量维度（模型决定）
+print("正在加载 Embedding 模型（首次运行会自动下载，约130MB）...")
+model = TextEmbedding(EMBEDDING_MODEL)
 print(f"模型加载完成，向量维度：{VECTOR_DIM}")
 
 client = QdrantClient(url=QDRANT_URL)
@@ -149,8 +154,9 @@ def ingest():
     texts = [doc["text"] for doc in documents]
 
     # 批量 Embedding（比一条条处理快很多）
+    # fastembed 返回生成器，用 list() 转成列表
     print("  正在计算向量（请稍候）...")
-    vectors = model.encode(texts, show_progress_bar=True)
+    vectors = list(model.embed(texts))
 
     # 构造 Qdrant 的数据格式
     points = [
