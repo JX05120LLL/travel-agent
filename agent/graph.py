@@ -34,6 +34,7 @@ from agent.state import AgentState
 from agent.prompts import SYSTEM_PROMPT
 from tools.weather import get_weather
 from tools.search import search_travel_info
+from tools.rag_retriever import retrieve_local_knowledge
 
 load_dotenv()
 
@@ -46,7 +47,7 @@ llm = ChatOpenAI(
 )
 
 # ── 注册工具 ─────────────────────────────────────────────────
-tools = [get_weather, search_travel_info]
+tools = [get_weather, search_travel_info, retrieve_local_knowledge]
 llm_with_tools = llm.bind_tools(tools)
 
 
@@ -61,8 +62,10 @@ def llm_node(state: AgentState):
     - 如果是工具执行完后的第二轮：整合结果，生成最终回答
     - 返回新消息，LangGraph 自动追加到 State.messages
     """
-    # 在消息历史最前面插入系统提示词
-    messages = [SystemMessage(content=SYSTEM_PROMPT)] + state["messages"]
+    from datetime import date
+    today = date.today().strftime("%Y年%m月%d日")
+    system_with_date = SYSTEM_PROMPT + f"\n\n当前日期：{today}"
+    messages = [SystemMessage(content=system_with_date)] + state["messages"]
     response = llm_with_tools.invoke(messages)
     # 返回字典，LangGraph 会把 messages 追加到 State 里
     return {"messages": [response]}
