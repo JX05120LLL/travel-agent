@@ -1,0 +1,32 @@
+# ── LLM & Agent ─────────────────────────
+langchain
+langchain-openai
+langchain-community
+langgraph
+
+# ── 工具依赖 ─────────────────────────────
+tavily-python           # 网络搜索
+httpx                   # HTTP 请求（天气/高德/Amadeus）
+
+# ── 向量数据库（Phase 4）────────────────
+# qdrant-client
+# sentence-transformers
+
+# ── 后端（Phase 6）──────────────────────
+# fastapi
+# uvicorn
+# python-jose
+# passlib
+# sqlalchemy
+# asyncpg
+# redis
+
+# ── 前端（Phase 5）──────────────────────
+# gradio
+
+# ── 通知推送（Phase 5/7）────────────────
+# apscheduler
+
+# ── 工具库 ───────────────────────────────
+python-dotenv
+pydantic

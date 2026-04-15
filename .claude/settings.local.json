@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(venv/Scripts/python --version)",
+      "Bash(pip --version)",
+      "Bash(venv/Scripts/pip --version)",
+      "Bash(venv/Scripts/pip list *)",
+      "Bash(grep \"\\\\.dist-info$\")",
+      "Bash(sed 's/.dist-info//')",
+      "Bash(venv/Scripts/python.exe -c ' *)",
+      "WebFetch(domain:docs.portainer.io)",
+      "Bash(git init:*)"
+    ]
+  }
+}
