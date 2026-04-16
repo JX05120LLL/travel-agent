@@ -35,6 +35,8 @@ from agent.prompts import SYSTEM_PROMPT
 from tools.weather import get_weather
 from tools.search import search_travel_info
 from tools.rag_retriever import retrieve_local_knowledge
+from tools.feishu_sender import send_to_feishu
+from tools.wechat_sender import send_to_wechat_work
 
 load_dotenv()
 
@@ -47,7 +49,13 @@ llm = ChatOpenAI(
 )
 
 # ── 注册工具 ─────────────────────────────────────────────────
-tools = [get_weather, search_travel_info, retrieve_local_knowledge]
+tools = [
+    get_weather,
+    search_travel_info,
+    retrieve_local_knowledge,
+    send_to_feishu,
+    send_to_wechat_work,
+]
 llm_with_tools = llm.bind_tools(tools)
 
 
