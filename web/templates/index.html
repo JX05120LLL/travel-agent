@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>旅行规划助手</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ request.url_for('static', path='app.css') }}">
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.2.6/dist/purify.min.js"></script>
+</head>
+<body>
+  <main class="app-shell">
+    <section class="chat-panel">
+      <header class="chat-header">
+        <div class="brand-block">
+          <div class="brand-mark">旅</div>
+          <div class="header-copy">
+            <p class="header-kicker">Travel Editorial Desk</p>
+            <h1>旅行规划助手</h1>
+            <p class="header-subtitle">把天气、路线、攻略和住宿建议整理成一份更像作品的旅行方案。</p>
+            <div class="header-meta">
+              <span>实时天气</span>
+              <span>本地攻略</span>
+              <span>路线建议</span>
+            </div>
+          </div>
+        </div>
+        <button type="button" class="ghost-button" id="clearBtn">清空对话</button>
+      </header>
+
+      <section class="prompt-strip" aria-label="快捷问题">
+        <span class="prompt-strip-label">快捷问法</span>
+        {% for prompt in suggestion_prompts %}
+        <button type="button" class="prompt-chip" data-prompt="{{ prompt }}">{{ prompt }}</button>
+        {% endfor %}
+      </section>
+
+      <div class="chat-scroll" id="chatScroll">
+        <section class="welcome-card" id="welcomeCard">
+          <p class="welcome-label">开始对话</p>
+          <h2>可以直接描述旅行需求，不用刻意组织格式。</h2>
+          <p class="welcome-text">
+            例如：“帮我规划从西安出发，3 天成都旅行，预算中等，偏美食和轻松路线。”
+          </p>
+          <div class="welcome-note">
+            <span class="welcome-note-title">建议提供：</span>
+            <span>出发地 / 天数 / 预算 / 偏好 / 是否需要住宿或交通建议</span>
+          </div>
+        </section>
+
+        <div id="messageList"></div>
+      </div>
+
+      <form class="composer" id="composerForm">
+        <label class="composer-label" for="messageInput">输入你的旅行问题</label>
+        <div class="composer-box">
+          <textarea
+            id="messageInput"
+            rows="1"
+            placeholder="比如：帮我做一份成都三天旅行规划，预算中等，不想太赶。"
+          ></textarea>
+          <button type="submit" id="sendBtn">发送</button>
+        </div>
+        <p class="composer-tip">按 Enter 发送，Shift + Enter 换行。</p>
+      </form>
+    </section>
+  </main>
+
+  <script>
+    window.TRAVEL_AGENT_CONFIG = {
+      chatEndpoint: "/chat"
+    };
+  </script>
+  <script src="{{ request.url_for('static', path='app.js') }}"></script>
+</body>
+</html>

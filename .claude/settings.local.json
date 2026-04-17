@@ -9,7 +9,12 @@
       "Bash(sed 's/.dist-info//')",
       "Bash(venv/Scripts/python.exe -c ' *)",
       "WebFetch(domain:docs.portainer.io)",
-      "Bash(git init:*)"
+      "Bash(git init:*)",
+      "WebFetch(domain:hermes-agent.nousresearch.com)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:api.github.com)",
+      "Bash(gh repo:*)"
     ]
   }
 }

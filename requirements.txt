@@ -13,8 +13,10 @@ httpx                   # HTTP 请求（天气/高德/Amadeus）
 # sentence-transformers
 
 # ── 后端（Phase 6）──────────────────────
-# fastapi
-# uvicorn
+fastapi
+uvicorn
+jinja2
+python-multipart
 # python-jose
 # passlib
 # sqlalchemy

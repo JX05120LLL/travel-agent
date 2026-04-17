@@ -23,7 +23,7 @@ EMBEDDING_MODEL = "BAAI/bge-small-zh-v1.5"
 TOP_K = 3  # 返回最相关的前3条结果
 
 # ── 初始化（模块加载时执行一次）────────────────────────────
-_client = QdrantClient(url=QDRANT_URL)
+_client = QdrantClient(url=QDRANT_URL, check_compatibility=False)
 _model = TextEmbedding(EMBEDDING_MODEL)
 
 
@@ -34,17 +34,23 @@ def retrieve_local_knowledge(query: str) -> str:
     当用户询问景点介绍、美食推荐、旅游攻略、门票价格、交通方式等本地知识时，优先调用此工具。
     参数 query：用户的查询内容，如"成都有什么好吃的"、"北京故宫门票多少钱"
     """
-    # 1. 把用户问题转成向量
-    query_vector = list(_model.embed([query]))[0].tolist()
+    try:
+        # 1. 把用户问题转成向量
+        query_vector = list(_model.embed([query]))[0].tolist()
 
-    # 2. 在 Qdrant 里搜索最相似的文本块
-    response = _client.query_points(
-        collection_name=COLLECTION_NAME,
-        query=query_vector,
-        limit=TOP_K,
-        score_threshold=0.3,  # 相似度低于0.3的结果不返回（避免不相关内容）
-    )
-    results = response.points
+        # 2. 在 Qdrant 里搜索最相似的文本块
+        response = _client.query_points(
+            collection_name=COLLECTION_NAME,
+            query=query_vector,
+            limit=TOP_K,
+            score_threshold=0.3,  # 相似度低于0.3的结果不返回（避免不相关内容）
+        )
+        results = response.points
+    except Exception as exc:
+        return (
+            "本地知识库暂时不可用，建议改用联网搜索补充信息。"
+            f"（检索异常：{exc}）"
+        )
 
     if not results:
         return "本地知识库中没有找到相关信息，建议联网搜索。"
