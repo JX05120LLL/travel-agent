@@ -32,6 +32,7 @@ from langgraph.prebuilt import ToolNode, tools_condition
 
 from agent.state import AgentState
 from agent.prompts import SYSTEM_PROMPT
+from tools.holiday_calendar import resolve_holiday_dates
 from tools.weather import get_weather
 from tools.search import search_travel_info
 from tools.rag_retriever import retrieve_local_knowledge
@@ -50,6 +51,7 @@ llm = ChatOpenAI(
 
 # ── 注册工具 ─────────────────────────────────────────────────
 tools = [
+    resolve_holiday_dates,
     get_weather,
     search_travel_info,
     retrieve_local_knowledge,
@@ -112,5 +114,4 @@ def build_graph():
 
 # 编译好的 Agent，供外部调用
 agent = build_graph()
-
 

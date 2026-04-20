@@ -19,8 +19,8 @@ jinja2
 python-multipart
 # python-jose
 # passlib
-# sqlalchemy
-# asyncpg
+sqlalchemy
+psycopg[binary]
 # redis
 
 # ── 前端（Phase 5）──────────────────────
