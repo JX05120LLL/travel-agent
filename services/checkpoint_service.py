@@ -46,6 +46,20 @@ class CheckpointService:
             checkpoint_id=checkpoint_id,
         )
 
+    @staticmethod
+    def _build_snapshot_scope() -> dict:
+        """显式声明 checkpoint 覆盖的工作区范围，避免回滚语义靠猜。"""
+        return {
+            "restores_plan_options": True,
+            "restores_active_plan_pointer": True,
+            "restores_active_comparison_pointer": True,
+            "captures_session_summary_seed": True,
+            "summary_refresh_mode": "restore_seed_then_refresh_from_messages",
+            "does_not_restore_messages": True,
+            "does_not_restore_comparison_rows": True,
+            "does_not_restore_trip_rows": True,
+        }
+
     def create_checkpoint(
         self,
         *,
@@ -80,6 +94,7 @@ class CheckpointService:
                 }
             )
 
+        snapshot_scope = self._build_snapshot_scope()
         payload = {
             "label": (label or "").strip() or f"检查点 {datetime.now().strftime('%m-%d %H:%M')}",
             "session_summary": session.summary,
@@ -90,6 +105,9 @@ class CheckpointService:
                 str(session.active_comparison_id) if session.active_comparison_id else None
             ),
             "plan_snapshots": plan_snapshots,
+            "captured_plan_option_count": len(plan_snapshots),
+            "snapshot_scope": snapshot_scope,
+            "summary_restore_mode": snapshot_scope["summary_refresh_mode"],
         }
         checkpoint = create_session_event(
             self.db,
@@ -212,6 +230,18 @@ class CheckpointService:
             event_payload={
                 "checkpoint_id": str(checkpoint.id),
                 "label": payload.get("label"),
+                "snapshot_scope": payload.get("snapshot_scope") or self._build_snapshot_scope(),
+                "summary_restore_mode": payload.get("summary_restore_mode")
+                or "restore_seed_then_refresh_from_messages",
+                "restored_plan_option_count": len(plan_snapshots),
+                "restored_active_plan_option_id": (
+                    str(session.active_plan_option_id) if session.active_plan_option_id else None
+                ),
+                "restored_active_comparison_id": (
+                    str(session.active_comparison_id) if session.active_comparison_id else None
+                ),
+                "restored_session_summary_seed": payload.get("session_summary"),
+                "summary_refresh_applied": True,
             },
         )
         self.memory_service.refresh_session_memory(session=session, commit=False)

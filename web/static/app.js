@@ -40,12 +40,10 @@ const eventEmpty = document.getElementById("eventEmpty");
 const recallList = document.getElementById("recallList");
 const recallEmpty = document.getElementById("recallEmpty");
 const promptChips = document.querySelectorAll(".prompt-chip");
-const sidebarTabs = document.querySelectorAll("[data-sidebar-tab]");
-const sidebarPanes = document.querySelectorAll("[data-sidebar-pane]");
+const workspaceDrawerToggle = document.querySelector(".workspace-drawer-toggle");
 const headerActionMenu = document.querySelector("[data-header-menu]");
 
 const conversation = [];
-const SIDEBAR_TAB_STORAGE_KEY = "travel_agent_sidebar_tab";
 let currentSessionId = localStorage.getItem(SESSION_STORAGE_KEY) || "";
 let sessionItems = [];
 let planOptionItems = [];
@@ -139,26 +137,16 @@ function scrollToBottom() {
 }
 
 
-function setSidebarTab(tabName) {
-  const nextTab = tabName || "prompts";
-
-  sidebarTabs.forEach((tab) => {
-    const isActive = tab.dataset.sidebarTab === nextTab;
-    tab.classList.toggle("is-active", isActive);
-    tab.setAttribute("aria-selected", String(isActive));
-  });
-
-  sidebarPanes.forEach((pane) => {
-    pane.classList.toggle("is-active", pane.dataset.sidebarPane === nextTab);
-  });
-
-  localStorage.setItem(SIDEBAR_TAB_STORAGE_KEY, nextTab);
-}
-
-
 function closeHeaderActionMenu() {
   if (headerActionMenu?.open) {
     headerActionMenu.removeAttribute("open");
+  }
+}
+
+
+function closeWorkspaceDrawer() {
+  if (workspaceDrawerToggle?.open) {
+    workspaceDrawerToggle.removeAttribute("open");
   }
 }
 
@@ -293,28 +281,85 @@ function renderSessionList() {
   sessionEmpty.classList.add("hidden");
 
   sessionItems.forEach((item) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "session-card";
-    if (item.id === currentSessionId) {
-      button.classList.add("is-active");
-    }
+    const shell = document.createElement("article");
+    shell.className = "session-card-shell";
 
-    button.innerHTML = `
-      <div class="session-card-title">${escapeHtml(item.title || "新对话")}</div>
-      <div class="session-card-preview">${escapeHtml(getSessionPreview(item))}</div>
-      <div class="session-card-meta">
-        <span>${escapeHtml(formatSessionTime(item.last_message_at) || "刚刚创建")}</span>
-        <span class="session-card-status">${escapeHtml(item.status || "active")}</span>
-      </div>
+    const isActive = item.id === currentSessionId;
+    shell.innerHTML = `
+      <button type="button" class="session-card ${isActive ? "is-active" : ""}" data-role="open">
+        <div class="session-card-title-row">
+          <div class="session-card-title">${escapeHtml(item.title || "新对话")}</div>
+        </div>
+        <div class="session-card-preview">${escapeHtml(getSessionPreview(item))}</div>
+        <div class="session-card-meta">
+          <span>${escapeHtml(formatSessionTime(item.last_message_at) || "刚刚创建")}</span>
+          <span class="session-card-status">${escapeHtml(item.status || "active")}</span>
+        </div>
+      </button>
+      <details class="session-card-menu">
+        <summary aria-label="会话操作"></summary>
+        <div class="session-card-menu-panel">
+          <button type="button" class="session-menu-btn" data-action="open">打开会话</button>
+          <button type="button" class="session-menu-btn" data-action="rename">重命名</button>
+          <button type="button" class="session-menu-btn" data-action="archive">归档</button>
+          <button type="button" class="session-menu-btn danger" data-action="delete">删除</button>
+        </div>
+      </details>
     `;
 
-    button.addEventListener("click", async () => {
+    const openButton = shell.querySelector('[data-role="open"]');
+    const menu = shell.querySelector(".session-card-menu");
+
+    openButton.addEventListener("click", async () => {
       await switchSession(item.id, item.title || "新对话");
     });
 
-    sessionList.appendChild(button);
+    menu.addEventListener("toggle", () => {
+      if (menu.open) {
+        closeSessionCardMenus(menu);
+      }
+    });
+
+    shell.querySelectorAll(".session-menu-btn").forEach((menuButton) => {
+      menuButton.addEventListener("click", async (event) => {
+        event.stopPropagation();
+        menu.removeAttribute("open");
+
+        const action = menuButton.dataset.action;
+        if (action === "open") {
+          await switchSession(item.id, item.title || "新对话");
+          return;
+        }
+        if (action === "rename") {
+          await renameSessionById(item.id);
+          return;
+        }
+        if (action === "archive") {
+          await archiveSessionById(item.id);
+          return;
+        }
+        if (action === "delete") {
+          await deleteSessionById(item.id);
+        }
+      });
+    });
+
+    sessionList.appendChild(shell);
   });
+}
+
+
+function closeSessionCardMenus(exceptMenu = null) {
+  document.querySelectorAll(".session-card-menu[open]").forEach((menu) => {
+    if (menu !== exceptMenu) {
+      menu.removeAttribute("open");
+    }
+  });
+}
+
+
+function findSessionItem(sessionId) {
+  return sessionItems.find((item) => item.id === sessionId);
 }
 
 
@@ -559,6 +604,190 @@ function renderRecalls() {
 }
 
 
+function buildMiniTags(tags) {
+  const visibleTags = tags.filter(Boolean);
+  if (!visibleTags.length) {
+    return "";
+  }
+
+  return `
+    <div class="mini-card-tags">
+      ${visibleTags
+        .map((tag) => `<span class="mini-tag">${escapeHtml(String(tag))}</span>`)
+        .join("")}
+    </div>
+  `;
+}
+
+
+function formatConfidenceLabel(value) {
+  if (value === null || value === undefined || value === "") {
+    return "";
+  }
+
+  const numeric = Number(value);
+  if (Number.isFinite(numeric)) {
+    const percent = numeric <= 1 ? Math.round(numeric * 100) : Math.round(numeric);
+    return `置信度 ${percent}%`;
+  }
+
+  return `置信度 ${String(value)}`;
+}
+
+
+function formatPreferenceSource(source) {
+  const sourceMap = {
+    user_explicit: "用户明确表达",
+    user_inferred: "系统推断",
+    session_override: "本轮会话覆盖",
+    imported: "外部导入",
+  };
+  return sourceMap[source] || source || "未知来源";
+}
+
+
+function formatCheckpointScopeSummary(scope) {
+  if (!scope || typeof scope !== "object") {
+    return "恢复当前工作区快照";
+  }
+
+  const segments = [];
+  if (scope.restores_plan_options) {
+    segments.push("恢复方案树");
+  }
+  if (scope.restores_active_plan_pointer) {
+    segments.push("恢复激活方案指针");
+  }
+  if (scope.restores_active_comparison_pointer) {
+    segments.push("恢复比较指针");
+  }
+  if (scope.captures_session_summary_seed) {
+    segments.push("保留摘要种子");
+  }
+  if (scope.does_not_restore_messages) {
+    segments.push("消息流水不回滚");
+  }
+  if (scope.does_not_restore_comparison_rows) {
+    segments.push("比较明细不回滚");
+  }
+  if (scope.does_not_restore_trip_rows) {
+    segments.push("正式行程不回滚");
+  }
+
+  return segments.length ? segments.join(" · ") : "恢复当前工作区快照";
+}
+
+
+function renderMiniCard(container, html, className = "mini-card") {
+  const node = document.createElement("article");
+  node.className = className;
+  node.innerHTML = html;
+  container.appendChild(node);
+}
+
+
+function renderPreferenceItems() {
+  const summaryText = stripMarkdownForPreview(memorySnapshot?.user_preference_summary || "");
+  const hasItems = preferenceItems.length > 0 || Boolean(summaryText);
+  renderEmptyState(preferenceList, preferenceEmpty, hasItems);
+  if (!hasItems) {
+    return;
+  }
+
+  if (summaryText) {
+    renderMiniCard(
+      preferenceList,
+      `
+        <div class="mini-card-title">偏好摘要注入</div>
+        <div class="mini-card-copy timeline-copy-strong">${escapeHtml(summaryText)}</div>
+        <div class="mini-card-meta">该摘要会随当前会话上下文一起注入，帮助模型延续用户偏好。</div>
+      `,
+      "mini-card mini-card-highlight"
+    );
+  }
+
+  preferenceItems.forEach((item) => {
+    const label = item.value?.label || item.value?.value || JSON.stringify(item.value || {});
+    const meta = [formatPreferenceSource(item.source), formatConfidenceLabel(item.confidence)]
+      .filter(Boolean)
+      .join(" · ");
+    renderMiniCard(
+      preferenceList,
+      `
+        <div class="mini-card-title">${escapeHtml(`${item.category}.${item.key}`)}</div>
+        <div class="mini-card-copy">${escapeHtml(String(label))}</div>
+        ${buildMiniTags([
+          item.source === "user_explicit" ? "长期稳定偏好" : "",
+          item.category || "",
+        ])}
+        ${meta ? `<div class="mini-card-meta">${escapeHtml(meta)}</div>` : ""}
+        ${
+          item.updated_at
+            ? `<div class="mini-card-meta">最近更新：${escapeHtml(formatSessionTime(item.updated_at) || "")}</div>`
+            : ""
+        }
+      `
+    );
+  });
+}
+
+
+function renderCheckpoints() {
+  renderEmptyState(checkpointList, checkpointEmpty, checkpointItems.length > 0);
+  if (!checkpointItems.length) {
+    return;
+  }
+
+  checkpointItems.forEach((item) => {
+    renderMiniCard(
+      checkpointList,
+      `
+        <div class="mini-card-title">${escapeHtml(item.label || "未命名检查点")}</div>
+        <div class="mini-card-copy">${escapeHtml(formatCheckpointScopeSummary(item.snapshot_scope))}</div>
+        ${buildMiniTags([
+          item.summary_restore_mode ? `摘要恢复：${item.summary_restore_mode}` : "",
+          item.active_plan_option_id ? "含激活方案指针" : "",
+          item.active_comparison_id ? "含比较指针" : "",
+        ])}
+        <div class="mini-card-meta">${escapeHtml(formatSessionTime(item.created_at) || "")}</div>
+      `
+    );
+  });
+}
+
+
+function renderRecalls() {
+  renderEmptyState(recallList, recallEmpty, recallItems.length > 0);
+  if (!recallItems.length) {
+    return;
+  }
+
+  recallItems.forEach((item) => {
+    const summary = stripMarkdownForPreview(item.summary || "暂无摘要");
+    const decisionSummary = stripMarkdownForPreview(item.decision_summary || "");
+    renderMiniCard(
+      recallList,
+      `
+        <div class="timeline-title">${escapeHtml(item.recall_type || "none")}</div>
+        <div class="timeline-copy">${escapeHtml(summary)}</div>
+        ${
+          decisionSummary
+            ? `<div class="timeline-copy timeline-copy-strong">${escapeHtml(decisionSummary)}</div>`
+            : ""
+        }
+        ${buildMiniTags([
+          item.matched_record_type ? `命中 ${item.matched_record_type}` : "",
+          item.matched_count ? `匹配 ${item.matched_count} 条` : "",
+          formatConfidenceLabel(item.confidence),
+        ])}
+        <div class="timeline-time">${escapeHtml(formatSessionTime(item.created_at) || "")}</div>
+      `,
+      "timeline-item"
+    );
+  });
+}
+
+
 function updatePhase(message, label) {
   message.phase.textContent = label;
   if (!message.rawContent) {
@@ -668,19 +897,19 @@ async function loadPlanOptions() {
 }
 
 
-async function renameCurrentSession() {
-  if (!currentSessionId) {
+async function renameSessionById(sessionId) {
+  if (!sessionId) {
     return;
   }
 
-  const current = sessionItems.find((item) => item.id === currentSessionId);
+  const current = findSessionItem(sessionId);
   const nextTitle = window.prompt("输入新的会话标题", current?.title || "新对话");
   if (nextTitle === null) {
     return;
   }
 
   try {
-    const response = await fetch(`${sessionsEndpoint}/${currentSessionId}`, {
+    const response = await fetch(`${sessionsEndpoint}/${sessionId}`, {
       method: "PATCH",
       headers: {
         "Content-Type": "application/json",
@@ -691,59 +920,87 @@ async function renameCurrentSession() {
       const payload = await response.json().catch(() => ({}));
       throw new Error(payload.detail || `重命名会话失败：${response.status}`);
     }
+
     const payload = await response.json();
-    updateActiveSessionTitle(payload.title || "新对话");
-    await Promise.all([loadSessions(), refreshInsightPanels()]);
+    if (sessionId === currentSessionId) {
+      updateActiveSessionTitle(payload.title || "新对话");
+      await Promise.all([loadSessions(), refreshInsightPanels()]);
+      return;
+    }
+    await loadSessions();
   } catch (error) {
     alert(error.message);
   }
 }
 
 
-async function archiveCurrentSession() {
-  if (!currentSessionId) {
+async function archiveSessionById(sessionId) {
+  if (!sessionId) {
     return;
   }
-  if (!window.confirm("确认归档当前会话吗？归档后仍可在列表中查看。")) {
+  if (!window.confirm("确认归档会话吗？归档后仍可在列表中查看。")) {
     return;
   }
 
   try {
-    const response = await fetch(`${sessionsEndpoint}/${currentSessionId}/archive`, {
+    const response = await fetch(`${sessionsEndpoint}/${sessionId}/archive`, {
       method: "PATCH",
     });
     if (!response.ok) {
       const payload = await response.json().catch(() => ({}));
       throw new Error(payload.detail || `归档会话失败：${response.status}`);
     }
-    await Promise.all([loadSessions(), refreshInsightPanels()]);
+
+    if (sessionId === currentSessionId) {
+      await Promise.all([loadSessions(), refreshInsightPanels()]);
+      return;
+    }
+    await loadSessions();
   } catch (error) {
     alert(error.message);
   }
 }
 
 
-async function deleteCurrentSession() {
-  if (!currentSessionId) {
+async function deleteSessionById(sessionId) {
+  if (!sessionId) {
     return;
   }
-  if (!window.confirm("确认删除当前会话吗？删除后当前工作区会清空。")) {
+  if (!window.confirm("确认删除会话吗？删除后无法恢复。")) {
     return;
   }
 
   try {
-    const response = await fetch(`${sessionsEndpoint}/${currentSessionId}`, {
+    const response = await fetch(`${sessionsEndpoint}/${sessionId}`, {
       method: "DELETE",
     });
     if (!response.ok) {
       const payload = await response.json().catch(() => ({}));
       throw new Error(payload.detail || `删除会话失败：${response.status}`);
     }
-    clearConversation();
+
+    if (sessionId === currentSessionId) {
+      clearConversation();
+    }
     await loadSessions();
   } catch (error) {
     alert(error.message);
   }
+}
+
+
+async function renameCurrentSession() {
+  await renameSessionById(currentSessionId);
+}
+
+
+async function archiveCurrentSession() {
+  await archiveSessionById(currentSessionId);
+}
+
+
+async function deleteCurrentSession() {
+  await deleteSessionById(currentSessionId);
 }
 
 
@@ -814,6 +1071,7 @@ async function loadMemorySnapshot() {
   if (!currentSessionId) {
     memorySnapshot = null;
     renderMemorySnapshot();
+    renderPreferenceItems();
     return;
   }
 
@@ -827,6 +1085,7 @@ async function loadMemorySnapshot() {
     memorySnapshot = null;
   }
   renderMemorySnapshot();
+  renderPreferenceItems();
 }
 
 
@@ -1448,16 +1707,15 @@ promptChips.forEach((button) => {
 });
 
 
-sidebarTabs.forEach((tab) => {
-  tab.addEventListener("click", () => {
-    setSidebarTab(tab.dataset.sidebarTab);
-  });
-});
-
-
 document.addEventListener("click", (event) => {
   if (headerActionMenu?.open && !headerActionMenu.contains(event.target)) {
     closeHeaderActionMenu();
+  }
+  if (workspaceDrawerToggle?.open && !workspaceDrawerToggle.contains(event.target)) {
+    closeWorkspaceDrawer();
+  }
+  if (!event.target.closest(".session-card-menu")) {
+    closeSessionCardMenus();
   }
 });
 
@@ -1465,6 +1723,8 @@ document.addEventListener("click", (event) => {
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
     closeHeaderActionMenu();
+    closeWorkspaceDrawer();
+    closeSessionCardMenus();
   }
 });
 
@@ -1514,6 +1774,5 @@ deleteSessionBtn.addEventListener("click", deleteCurrentSession);
   button.addEventListener("click", closeHeaderActionMenu);
 });
 
-setSidebarTab(localStorage.getItem(SIDEBAR_TAB_STORAGE_KEY) || "prompts");
 autoResizeTextarea();
 loadSessions().then(() => Promise.all([loadSessionHistory(), loadPlanOptions(), refreshInsightPanels()]));

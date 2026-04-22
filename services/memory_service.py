@@ -286,6 +286,173 @@ def _build_recall_runtime_section(recall_result: dict | None) -> str | None:
     return "\n".join(lines)
 
 
+def _format_runtime_preference_candidate_line(item) -> str:
+    """把 PreferenceCandidate 压成一行。"""
+    identity = str(getattr(item, "identity", "unknown")).strip()
+    value = _build_preference_display_value(getattr(item, "value", None))
+    return f"- {identity}: {value}"
+
+
+def _format_runtime_user_preference_line(item: UserPreference) -> str:
+    """把长期偏好压成一行。"""
+    confidence = Decimal(str(item.confidence or 0))
+    identity = f"{item.preference_category}.{item.preference_key}"
+    value = _build_preference_display_value(item.preference_value)
+    return f"- {identity}: {value} (置信度 {confidence:.2f})"
+
+
+def _build_preference_runtime_section_v2(
+    preference_context: dict | None,
+    fallback_summary: str | None = None,
+) -> str | None:
+    """把偏好上下文组织成更明确的分层注入段。"""
+    if not preference_context:
+        return fallback_summary
+
+    session_overrides = preference_context.get("session_overrides") or []
+    current_signals = preference_context.get("current_signals") or []
+    stable_preferences = preference_context.get("stable_preferences") or []
+    flexible_preferences = preference_context.get("flexible_preferences") or []
+    suppressed_conflicts = preference_context.get("suppressed_conflicts") or []
+
+    if not (
+        session_overrides
+        or current_signals
+        or stable_preferences
+        or flexible_preferences
+        or suppressed_conflicts
+    ):
+        return fallback_summary
+
+    lines = [
+        "【用户偏好分层】",
+        "已结合本轮输入做过冲突治理：如与当前轮明确要求冲突，以当前轮要求为准。",
+    ]
+
+    if session_overrides:
+        lines.append("本轮明确偏好：")
+        lines.extend(
+            _format_runtime_preference_candidate_line(item)
+            for item in session_overrides[:4]
+        )
+
+    if current_signals:
+        lines.append("本轮即时信号：")
+        lines.extend(
+            _format_runtime_preference_candidate_line(item)
+            for item in current_signals[:4]
+        )
+
+    if stable_preferences:
+        lines.append("稳定长期偏好：")
+        lines.extend(
+            _format_runtime_user_preference_line(item)
+            for item in stable_preferences[:4]
+        )
+
+    if flexible_preferences:
+        lines.append("柔性长期偏好：")
+        lines.extend(
+            _format_runtime_user_preference_line(item)
+            for item in flexible_preferences[:3]
+        )
+
+    if suppressed_conflicts:
+        lines.append("本轮暂不沿用的长期偏好：")
+        lines.extend(
+            (
+                f"- {item['identity']}: 原偏好={item['stored_value']}，"
+                f"本轮输入={item['incoming_value']}"
+            )
+            for item in suppressed_conflicts[:3]
+        )
+
+    return "\n".join(lines)
+
+
+def _format_recall_runtime_line_v2(item: dict) -> str:
+    """把召回结果压成适合运行时注入的一行。"""
+    title = _truncate_text(str(item.get("title") or "未命名记录"), 60)
+    summary = _truncate_text(str(item.get("summary") or "暂无摘要"), 120)
+    reasons = "、".join(item.get("reasons") or [])
+    line = f"- {title}: {summary}"
+    if reasons:
+        line += f"；命中原因：{reasons}"
+    decision_note = str(item.get("decision_note") or "").strip()
+    if decision_note:
+        line += f"；处理建议：{decision_note}"
+    blocking_reasons = item.get("blocking_reasons") or []
+    if blocking_reasons:
+        line += f"；暂不直接沿用原因：{'、'.join(blocking_reasons[:2])}"
+    return line
+
+
+def _build_recall_runtime_section_v2(recall_result: dict | None) -> str | None:
+    """把召回结果组织成更结构化的运行时上下文。"""
+    if not recall_result:
+        return None
+
+    grouped_matches = recall_result.get("grouped_matches") or {}
+    decision_groups = recall_result.get("decision_groups") or {}
+    if not any(grouped_matches.values()) and not any(decision_groups.values()):
+        return (
+            recall_result.get("injection_section")
+            or (
+                "【本轮历史召回】\n"
+                + str(recall_result.get("summary") or "未命中可复用历史，请基于当前输入继续规划。")
+            )
+        )
+
+    lines = [
+        "【本轮历史召回】",
+        "以下内容来自跨会话历史，仅在与本轮需求一致时复用；若条件不完全一致，只能作为参考样例。",
+    ]
+
+    strong_history = grouped_matches.get("strong_history") or []
+    if strong_history:
+        lines.append("可优先复用的历史正式行程 / 已成型方案：")
+        lines.extend(_format_recall_runtime_line_v2(item) for item in strong_history[:2])
+
+    candidate_options = grouped_matches.get("candidate_options") or []
+    if candidate_options:
+        lines.append("可借鉴的历史候选方案：")
+        lines.extend(_format_recall_runtime_line_v2(item) for item in candidate_options[:3])
+
+    relevant_preferences = grouped_matches.get("relevant_preferences") or []
+    if relevant_preferences:
+        lines.append("与本轮相关的长期偏好回顾：")
+        lines.extend(
+            _format_recall_runtime_line_v2(item) for item in relevant_preferences[:3]
+        )
+
+    related_sessions = grouped_matches.get("related_sessions") or []
+    if related_sessions:
+        lines.append("相关历史会话线索：")
+        lines.extend(_format_recall_runtime_line_v2(item) for item in related_sessions[:2])
+
+    blocked_items = decision_groups.get("blocked") or []
+    if blocked_items:
+        lines.append("虽然命中但本轮先不要直接沿用的记录：")
+        lines.extend(_format_recall_runtime_line_v2(item) for item in blocked_items[:2])
+
+    reference_only = decision_groups.get("reference_only") or []
+    if reference_only:
+        lines.append("命中但更适合作为参考样例的记录：")
+        lines.extend(_format_recall_runtime_line_v2(item) for item in reference_only[:2])
+
+    decision_summary = str(recall_result.get("decision_summary") or "").strip()
+    if decision_summary:
+        lines.append("召回治理结论：")
+        lines.append(_truncate_text(decision_summary, 180))
+
+    summary = str(recall_result.get("summary") or "").strip()
+    if summary:
+        lines.append("召回结论提示：")
+        lines.append(_truncate_text(summary, 180))
+
+    return "\n".join(lines)
+
+
 def _trim_section_content(content: str, *, max_length: int = RUNTIME_CONTEXT_SECTION_MAX_LENGTH) -> str:
     """避免某个 section 过长，把整体上下文预算吃光。"""
     clean = str(content or "").strip()
@@ -394,7 +561,7 @@ def _collect_runtime_context_sections(
             )
         )
 
-    recall_section = _build_recall_runtime_section(recall_result)
+    recall_section = _build_recall_runtime_section_v2(recall_result)
     if recall_section:
         sections.append(
             RuntimeContextSection(

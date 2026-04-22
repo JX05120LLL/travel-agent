@@ -7,7 +7,14 @@ from datetime import datetime
 
 from sqlalchemy.orm import Session
 
-from db.models import ChatSession, PlanComparison, PlanOption, Trip, TripDestination, TripItineraryDay
+from db.models import (
+    ChatSession,
+    PlanComparison,
+    PlanOption,
+    Trip,
+    TripDestination,
+    TripItineraryDay,
+)
 from db.repositories.comparison_repository import get_plan_comparison
 from db.repositories.plan_option_repository import get_plan_option
 from db.repositories.session_event_repository import create_session_event
@@ -89,15 +96,25 @@ class TripService:
                 user_id=user_id,
             )
             if comparison is None:
-                raise ValueError("指定的方案比较不存在。")
+                raise ValueError("指定的方案比较不存在")
+        elif session.active_comparison_id is not None:
+            comparison = get_plan_comparison(
+                self.db,
+                session_id=session.id,
+                comparison_id=session.active_comparison_id,
+                user_id=user_id,
+            )
 
         target_plan_id = plan_option_id
+        selection_source = "explicit_plan_option" if plan_option_id is not None else None
         if target_plan_id is None and comparison is not None and comparison.recommended_option_id:
             target_plan_id = comparison.recommended_option_id
+            selection_source = "comparison_recommended"
         if target_plan_id is None and session.active_plan_option_id is not None:
             target_plan_id = session.active_plan_option_id
+            selection_source = "active_session_plan_option"
         if target_plan_id is None:
-            raise ValueError("当前没有可沉淀为正式行程的候选方案。")
+            raise ValueError("当前没有可沉淀为正式行程的候选方案")
 
         plan_option = get_plan_option(
             self.db,
@@ -106,13 +123,14 @@ class TripService:
             user_id=user_id,
         )
         if plan_option is None:
-            raise ValueError("指定的候选方案不存在。")
+            raise ValueError("指定的候选方案不存在")
 
         return self._create_trip_from_plan_option(
             session=session,
             user_id=user_id,
             plan_option=plan_option,
             comparison=comparison,
+            selection_source=selection_source or "unknown",
             commit=commit,
         )
 
@@ -123,6 +141,7 @@ class TripService:
         user_id: uuid.UUID,
         plan_option: PlanOption,
         comparison: PlanComparison | None = None,
+        selection_source: str = "unknown",
         commit: bool = True,
     ) -> Trip:
         """把候选方案沉淀为正式行程。"""
@@ -175,6 +194,20 @@ class TripService:
                 "title": trip.title,
                 "primary_destination": trip.primary_destination,
                 "total_days": trip.total_days,
+                "selection_source": selection_source,
+                "workspace_state": {
+                    "active_plan_option_id": (
+                        str(session.active_plan_option_id)
+                        if session.active_plan_option_id
+                        else None
+                    ),
+                    "active_comparison_id": (
+                        str(session.active_comparison_id)
+                        if session.active_comparison_id
+                        else None
+                    ),
+                    "comparison_status": comparison.status if comparison else None,
+                },
             },
         )
 

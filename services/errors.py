@@ -17,3 +17,11 @@ class ServiceNotFoundError(ServiceError):
 
 class ServiceValidationError(ServiceError):
     """业务参数不合法或状态不允许。"""
+
+
+class ServiceConfigError(ServiceError):
+    """运行配置缺失或不合法。"""
+
+
+class ServiceIntegrationError(ServiceError):
+    """调用外部服务失败。"""

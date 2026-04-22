@@ -95,6 +95,7 @@ class PlanOptionService:
         items = list_plan_options(self.db, session_id=session.id, user_id=user_id)
         return session, self._build_branch_views(items)
 
+
     def create_option(
         self,
         *,

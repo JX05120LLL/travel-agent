@@ -282,13 +282,13 @@ def _build_climate_reference(city_name: str, start: date, end: date) -> str:
             current = date(current.year, current.month + 1, 1)
 
     result = [
-        f"【{city_name}{start.isoformat()} 至 {end.isoformat()} 季节气候参考】",
+        f"## {city_name} 季节气候参考（{start.isoformat()} 至 {end.isoformat()}）",
         (
-            f"当前日期是 {date.today().isoformat()}，距离这段行程时间较远，"
-            "目前不适合提供精确天气预报。建议在出发前 15 天到 30 天内再查询具体天气。"
+            f"当前日期：{date.today().isoformat()}。距离出行日期较远，"
+            "这里给你的是季节趋势参考，不代表当天精确天气。"
         ),
         "",
-        "以下内容为季节气候参考，不代表当天精确天气：",
+        "### 月度特征",
     ]
 
     for month in months:
@@ -299,12 +299,12 @@ def _build_climate_reference(city_name: str, start: date, end: date) -> str:
 
     city_note = CITY_CLIMATE_NOTES.get(city_name)
     if city_note:
-        result.extend(["", f"{city_name}出行补充提示：{city_note}"])
+        result.extend(["", "### 城市补充", f"- {city_note}"])
 
     result.extend(
         [
             "",
-            "建议：",
+            "### 使用建议",
             "1. 现在先按季节特征准备路线、酒店和衣物思路。",
             "2. 临近出发时，再刷新精确天气，用于细化每日行程和行李准备。",
         ]
@@ -329,6 +329,130 @@ def _fetch_json(url: str, *, headers: dict, params: dict) -> dict:
     response = httpx.get(url, headers=headers, params=params, timeout=10)
     response.raise_for_status()
     return response.json()
+
+
+def _to_int(value: str | None) -> int | None:
+    """把字符串数字安全转换成 int。"""
+    if value in (None, ""):
+        return None
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _build_weather_advice_lines(daily_items: list[dict]) -> list[str]:
+    """根据预报生成简短出行建议。"""
+    if not daily_items:
+        return ["- 建议临近出发前再次刷新天气，避免预报变化。"]
+
+    max_temp = None
+    min_temp = None
+    max_pop = 0
+    for day in daily_items:
+        day_max = _to_int(day.get("tempMax"))
+        day_min = _to_int(day.get("tempMin"))
+        day_pop = _to_int(day.get("pop")) or 0
+        if day_max is not None:
+            max_temp = day_max if max_temp is None else max(max_temp, day_max)
+        if day_min is not None:
+            min_temp = day_min if min_temp is None else min(min_temp, day_min)
+        max_pop = max(max_pop, day_pop)
+
+    advice: list[str] = []
+    if max_pop >= 60:
+        advice.append("- 降水概率较高，建议随身带伞并预留室内备选行程。")
+    elif max_pop >= 30:
+        advice.append("- 可能有阵雨，建议准备轻便雨具。")
+
+    if max_temp is not None and max_temp >= 32:
+        advice.append("- 白天气温偏高，注意防晒和补水。")
+    if min_temp is not None and min_temp <= 10:
+        advice.append("- 早晚偏凉，建议准备外套。")
+
+    if not advice:
+        advice.append("- 天气整体较平稳，可按常规行程推进。")
+
+    advice.append("- 具体景点出发前再看临近天气，可减少行程变更。")
+    return advice
+
+
+def _build_default_weather_markdown(
+    *,
+    city_name: str,
+    now_data: dict | None,
+    forecast_items: list[dict],
+) -> str:
+    """默认模式（实时 + 3天）排版。"""
+    lines = [f"## {city_name} 天气概览"]
+
+    if now_data:
+        lines.extend(
+            [
+                "### 当前实况",
+                f"- 天气：{now_data.get('text', '未知')}",
+                (
+                    f"- 温度：{now_data.get('temp', '未知')}°C"
+                    f"（体感 {now_data.get('feelsLike', '未知')}°C）"
+                ),
+                (
+                    f"- 风况：{now_data.get('windDir', '未知')} / "
+                    f"{now_data.get('windScale', '未知')} 级"
+                ),
+                f"- 湿度：{now_data.get('humidity', '未知')}%",
+            ]
+        )
+    else:
+        lines.extend(["### 当前实况", "- 当前实况暂未获取成功。"])
+
+    if forecast_items:
+        lines.extend(["", "### 未来 3 天"])
+        for day in forecast_items:
+            lines.append(
+                (
+                    f"- {day.get('fxDate', '未知日期')}："
+                    f"{day.get('textDay', '未知')}，"
+                    f"{day.get('tempMin', '未知')}°C ~ {day.get('tempMax', '未知')}°C，"
+                    f"降水概率 {day.get('pop', '未知')}%"
+                )
+            )
+
+    lines.extend(["", "### 出行建议", *_build_weather_advice_lines(forecast_items)])
+    return "\n".join(lines)
+
+
+def _build_range_weather_markdown(
+    *,
+    city_name: str,
+    start: date,
+    end: date,
+    forecast_window: str,
+    resolution_note: str | None,
+    daily_items: list[dict],
+) -> str:
+    """范围模式（指定日期区间）排版。"""
+    lines = [f"## {city_name} 行程天气（{start.isoformat()} 至 {end.isoformat()}）"]
+    if resolution_note:
+        lines.append(f"> {resolution_note}")
+    lines.append(f"- 数据窗口：未来 {forecast_window[:-1]} 天预报接口")
+    lines.append("")
+    lines.append("### 每日预报")
+    lines.append("| 日期 | 白天/夜间 | 温度 | 降水概率 | 风况 |")
+    lines.append("| --- | --- | --- | --- | --- |")
+
+    for day in daily_items:
+        lines.append(
+            (
+                f"| {day.get('fxDate', '未知')} | "
+                f"{day.get('textDay', '未知')} / {day.get('textNight', '未知')} | "
+                f"{day.get('tempMin', '未知')}°C ~ {day.get('tempMax', '未知')}°C | "
+                f"{day.get('pop', '未知')}% | "
+                f"{day.get('windDirDay', '未知')} {day.get('windScaleDay', '未知')}级 |"
+            )
+        )
+
+    lines.extend(["", "### 出行建议", *_build_weather_advice_lines(daily_items)])
+    return "\n".join(lines)
 
 
 @tool
@@ -416,25 +540,13 @@ def get_weather(
         except Exception as exc:
             return f"查询天气失败：{exc}"
 
-        if now_data.get("code") == "200":
-            now = now_data["now"]
-            result = f"【{city_name}实时天气】\n"
-            result += f"天气：{now['text']}，温度：{now['temp']}°C，体感温度：{now['feelsLike']}°C\n"
-            result += f"风向：{now['windDir']}，风力：{now['windScale']}级，湿度：{now['humidity']}%\n\n"
-        else:
-            result = f"实时天气查询失败（code: {now_data.get('code')}）\n\n"
-
-        if forecast_data.get("code") == "200":
-            result += f"【{city_name}未来3天预报】\n"
-            for day in forecast_data["daily"]:
-                result += (
-                    f"{day['fxDate']}：{day['textDay']}，"
-                    f"{day['tempMin']}°C ~ {day['tempMax']}°C，"
-                    f"降水概率：{day.get('pop', '未知')}%\n"
-                )
-        else:
-            result += f"天气预报查询失败（code: {forecast_data.get('code')}）\n"
-        return result
+        now = now_data.get("now") if now_data.get("code") == "200" else None
+        daily_items = forecast_data.get("daily") if forecast_data.get("code") == "200" else []
+        return _build_default_weather_markdown(
+            city_name=city_name,
+            now_data=now,
+            forecast_items=daily_items or [],
+        )
 
     today = date.today()
     if requested_start < today:
@@ -488,26 +600,11 @@ def get_weather(
             " 你可以稍后再试，或确认日期是否在未来 30 天内。"
         )
 
-    heading = (
-        f"【{city_name}{requested_start.isoformat()} 至 {requested_end.isoformat()}天气预报】"
-        if requested_start != requested_end
-        else f"【{city_name}{requested_start.isoformat()}天气预报】"
+    return _build_range_weather_markdown(
+        city_name=city_name,
+        start=requested_start,
+        end=requested_end,
+        forecast_window=forecast_window,
+        resolution_note=resolution_note,
+        daily_items=filtered_days,
     )
-    result_lines = [heading]
-    if resolution_note:
-        result_lines.append(resolution_note)
-    result_lines.append(f"已自动调用未来 {forecast_window[:-1]} 天预报接口。")
-
-    for day in filtered_days:
-        result_lines.append(
-            f"{day['fxDate']}：白天{day['textDay']}，夜间{day['textNight']}，"
-            f"{day['tempMin']}°C ~ {day['tempMax']}°C，降水概率：{day.get('pop', '未知')}%，"
-            f"风向：{day.get('windDirDay', '未知')}，风力：{day.get('windScaleDay', '未知')}级"
-        )
-
-    if requested_end == requested_start and len(filtered_days) == 1:
-        result_lines.append("这是一天天气视角，适合判断是否需要带伞、增减衣物或调整当天行程。")
-    else:
-        result_lines.append("这是行程日期范围内的天气视角，适合判断整体节奏、穿衣准备和降雨风险。")
-
-    return "\n".join(result_lines)

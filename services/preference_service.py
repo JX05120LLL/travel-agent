@@ -41,7 +41,7 @@ class PreferenceService:
         message_id: uuid.UUID,
         text: str,
     ) -> list[UserPreference]:
-        """把用户消息里可复用的稳定偏好沉淀为长期记忆。"""
+        """把用户消息里可复用的稳定偏好沉淀成长期记忆。"""
         candidates = extract_preference_candidates(text)
         remembered: list[UserPreference] = []
 
@@ -117,6 +117,7 @@ class PreferenceService:
         current_explicit: list[PreferenceCandidate] = []
         current_inferred: list[PreferenceCandidate] = []
         suppressed_identities: set[str] = set()
+        suppressed_conflicts: list[dict] = []
         preference_map = {
             self._preference_identity(item): item for item in sorted_preferences
         }
@@ -125,14 +126,18 @@ class PreferenceService:
             matched_preference = preference_map.get(candidate.identity)
             if candidate.source == "user_explicit":
                 current_explicit.append(candidate)
-                if (
-                    matched_preference is None
-                    or self._is_conflicting(
-                        preference=matched_preference,
-                        candidate=candidate,
-                    )
+                if matched_preference is not None and self._is_conflicting(
+                    preference=matched_preference,
+                    candidate=candidate,
                 ):
                     suppressed_identities.add(candidate.identity)
+                    suppressed_conflicts.append(
+                        self._build_conflict_detail(
+                            preference=matched_preference,
+                            candidate=candidate,
+                            reason="current_explicit_override",
+                        )
+                    )
                 continue
 
             if (
@@ -143,14 +148,18 @@ class PreferenceService:
                 continue
 
             current_inferred.append(candidate)
-            if (
-                matched_preference is not None
-                and self._is_conflicting(
-                    preference=matched_preference,
-                    candidate=candidate,
-                )
+            if matched_preference is not None and self._is_conflicting(
+                preference=matched_preference,
+                candidate=candidate,
             ):
                 suppressed_identities.add(candidate.identity)
+                suppressed_conflicts.append(
+                    self._build_conflict_detail(
+                        preference=matched_preference,
+                        candidate=candidate,
+                        reason="current_signal_conflict",
+                    )
+                )
 
         effective_preferences: list[UserPreference] = []
         suppressed_preferences: list[UserPreference] = []
@@ -160,17 +169,27 @@ class PreferenceService:
             else:
                 effective_preferences.append(item)
 
+        stable_preferences, flexible_preferences = self._split_effective_preferences(
+            effective_preferences
+        )
+
         summary = self._build_preference_injection_summary(
             current_explicit=current_explicit,
             current_inferred=current_inferred,
-            effective_preferences=effective_preferences,
-            suppressed_preferences=suppressed_preferences,
+            stable_preferences=stable_preferences,
+            flexible_preferences=flexible_preferences,
+            suppressed_conflicts=suppressed_conflicts,
         )
         return {
             "current_explicit": current_explicit,
             "current_inferred": current_inferred,
             "effective_preferences": effective_preferences,
             "suppressed_preferences": suppressed_preferences,
+            "stable_preferences": stable_preferences,
+            "flexible_preferences": flexible_preferences,
+            "session_overrides": current_explicit,
+            "current_signals": current_inferred,
+            "suppressed_conflicts": suppressed_conflicts,
             "summary": summary,
         }
 
@@ -222,19 +241,54 @@ class PreferenceService:
             return str(value["value"])
         return str(value)
 
+    @staticmethod
+    def _split_effective_preferences(
+        preferences: list[UserPreference],
+    ) -> tuple[list[UserPreference], list[UserPreference]]:
+        """把有效偏好拆成稳定层和柔性层。"""
+        stable_preferences: list[UserPreference] = []
+        flexible_preferences: list[UserPreference] = []
+
+        for item in preferences:
+            confidence = Decimal(str(item.confidence or 0))
+            if item.source == "user_explicit" or confidence >= Decimal("0.90"):
+                stable_preferences.append(item)
+            else:
+                flexible_preferences.append(item)
+
+        return stable_preferences, flexible_preferences
+
+    def _build_conflict_detail(
+        self,
+        *,
+        preference: UserPreference,
+        candidate: PreferenceCandidate,
+        reason: str,
+    ) -> dict:
+        """记录长期偏好被本轮输入压制的原因。"""
+        return {
+            "identity": self._preference_identity(preference),
+            "stored_value": self._display_preference_value(preference.preference_value),
+            "incoming_value": self._display_preference_value(candidate.value),
+            "incoming_source": candidate.source,
+            "reason": reason,
+        }
+
     def _build_preference_injection_summary(
         self,
         *,
         current_explicit: list[PreferenceCandidate],
         current_inferred: list[PreferenceCandidate],
-        effective_preferences: list[UserPreference],
-        suppressed_preferences: list[UserPreference],
+        stable_preferences: list[UserPreference],
+        flexible_preferences: list[UserPreference],
+        suppressed_conflicts: list[dict],
     ) -> str | None:
         if not (
             current_explicit
             or current_inferred
-            or effective_preferences
-            or suppressed_preferences
+            or stable_preferences
+            or flexible_preferences
+            or suppressed_conflicts
         ):
             return None
 
@@ -248,29 +302,39 @@ class PreferenceService:
             lines.append("如与长期偏好冲突，以本轮明确要求为准。")
 
         if current_inferred:
-            lines.append("本轮可参考的即时偏好倾向：")
+            lines.append("本轮可参考的即时偏好信号：")
             lines.extend(
                 f"- {item.identity}: {self._display_preference_value(item.value)}"
                 for item in current_inferred
             )
 
-        if effective_preferences:
-            lines.append("可延续的长期稳定偏好：")
+        if stable_preferences:
+            lines.append("可稳定沿用的长期偏好：")
             lines.extend(
                 (
                     f"- {self._preference_identity(item)}: "
                     f"{self._display_preference_value(item.preference_value)} "
                     f"(置信度 {Decimal(str(item.confidence or 0)):.2f})"
                 )
-                for item in effective_preferences
+                for item in stable_preferences
             )
 
-        if suppressed_preferences:
-            lines.append("以下长期偏好与本轮要求冲突，本轮暂不沿用：")
+        if flexible_preferences:
+            lines.append("可作为柔性参考的长期偏好：")
             lines.extend(
-                f"- {self._preference_identity(item)}: "
-                f"{self._display_preference_value(item.preference_value)}"
-                for item in suppressed_preferences
+                (
+                    f"- {self._preference_identity(item)}: "
+                    f"{self._display_preference_value(item.preference_value)} "
+                    f"(置信度 {Decimal(str(item.confidence or 0)):.2f})"
+                )
+                for item in flexible_preferences
+            )
+
+        if suppressed_conflicts:
+            lines.append("以下长期偏好与本轮输入冲突，本轮暂不沿用：")
+            lines.extend(
+                f"- {item['identity']}: 原偏好={item['stored_value']}，本轮输入={item['incoming_value']}"
+                for item in suppressed_conflicts
             )
 
         return "\n".join(lines)

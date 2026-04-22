@@ -15,13 +15,23 @@ from db.repositories.recall_repository import (
 )
 from db.repositories.session_repository import list_user_sessions_for_recall
 from db.repositories.trip_repository import list_user_trips
-from domain.recall.ranking import build_query_profile, score_recall_candidate
 from domain.plan_option.splitters import build_plan_summary, extract_mentioned_destinations
+from domain.recall.ranking import build_query_profile, score_recall_candidate
 from tools.holiday_calendar import contains_holiday_keyword, resolve_holiday_window
 
 
 class RecallService:
-    """负责跨会话历史召回及日志记录。"""
+    """负责跨会话历史召回与日志记录。"""
+
+    BLOCKING_REASON_KEYWORDS = (
+        "偏好冲突",
+        "具体日期未命中",
+        "节假日窗口未重合",
+        "节假日档期不一致",
+        "出行月份不一致",
+        "非周末场景",
+        "天数偏差较大",
+    )
 
     def __init__(self, db: Session):
         self.db = db
@@ -205,18 +215,29 @@ class RecallService:
                     "record_type": "preference",
                     "record_id": str(preference.id),
                     "title": f"{preference.preference_category}.{preference.preference_key}",
-                    "summary": str(preference.preference_value.get("label") or preference.preference_value),
+                    "summary": str(
+                        preference.preference_value.get("label")
+                        or preference.preference_value
+                    ),
                     "score": score,
                     "reasons": reasons,
                 }
             )
 
         matches.sort(key=lambda item: item["score"], reverse=True)
-        matches = matches[:limit]
+        matches = [
+            self._annotate_match_decision(item)
+            for item in matches[:limit]
+        ]
         top = matches[0] if matches else None
         confidence = top["score"] if top else 0
         grouped_matches = self._group_matches(matches)
-        injection_section = self._build_injection_section(grouped_matches)
+        decision_groups = self._group_match_decisions(matches)
+        decision_summary = self._build_decision_summary(decision_groups)
+        injection_section = self._build_injection_section(
+            grouped_matches,
+            decision_groups,
+        )
 
         if not matches:
             recall_type = "none"
@@ -225,26 +246,33 @@ class RecallService:
             len(matches) > 1 and matches[0]["score"] - matches[1]["score"] >= 0.18
         ):
             recall_type = top["record_type"]
-            reason_text = "；".join(top.get("reasons") or [])
+            reason_text = "、".join(top.get("reasons") or [])
             summary = (
-                f"已召回历史{top['record_type']}：{top['title']}。\n"
+                f"已召回历史{top['record_type']}：{top['title']}\n"
                 f"摘要：{top['summary'] or '暂无摘要'}"
             )
             if reason_text:
                 summary += f"\n命中原因：{reason_text}"
+            if top.get("decision_note"):
+                summary += f"\n处理建议：{top['decision_note']}"
         else:
             recall_type = top["record_type"]
             candidate_lines = [
                 (
-                    f"- {item['title']}（{item['record_type']}，匹配度 {item['score']:.2f}"
-                    + (f"，命中 { '；'.join(item.get('reasons') or []) }" if item.get("reasons") else "")
-                    + "）"
+                    f"- {item['title']}（{item['record_type']}，匹配度 {item['score']:.2f}）"
+                    + (
+                        f"，命中：{'、'.join(item.get('reasons') or [])}"
+                        if item.get("reasons")
+                        else ""
+                    )
                 )
                 for item in matches[:3]
             ]
             summary = "找到多条相近的历史记录，请优先按下面候选理解当前问题：\n" + "\n".join(
                 candidate_lines
             )
+            if decision_summary:
+                summary += f"\n{decision_summary}"
 
         recall_log = HistoryRecallLog(
             user_id=user_id,
@@ -264,6 +292,8 @@ class RecallService:
         recall_log.recall_payload = {
             "matches": matches,
             "grouped_matches": grouped_matches,
+            "decision_groups": decision_groups,
+            "decision_summary": decision_summary,
             "summary": summary,
             "injection_section": injection_section,
             "holiday_window": holiday_window,
@@ -274,6 +304,8 @@ class RecallService:
             "summary": summary,
             "matches": matches,
             "grouped_matches": grouped_matches,
+            "decision_groups": decision_groups,
+            "decision_summary": decision_summary,
             "confidence": confidence,
             "injection_section": injection_section,
             "log_id": str(recall_log.id),
@@ -323,19 +355,98 @@ class RecallService:
                 grouped["related_sessions"].append(item)
         return grouped
 
-    def _build_injection_section(self, grouped_matches: dict[str, list[dict]]) -> str:
+    def _annotate_match_decision(self, item: dict) -> dict:
+        """补充是否建议直接沿用的治理标签。"""
+        annotated = dict(item)
+        score = float(annotated.get("score") or 0)
+        reasons = list(annotated.get("reasons") or [])
+        blocking_reasons = [
+            reason
+            for reason in reasons
+            if any(keyword in reason for keyword in self.BLOCKING_REASON_KEYWORDS)
+        ]
+
+        record_type = str(annotated.get("record_type") or "")
+        if blocking_reasons:
+            adoption_level = "blocked"
+            decision_note = "虽然命中了部分条件，但存在明显冲突，本轮先不要直接沿用。"
+        elif record_type in {"trip", "plan_option"} and score >= 0.78:
+            adoption_level = "adoptable"
+            decision_note = "核心条件较一致，可优先复用其中已验证过的安排。"
+        elif record_type == "preference" and score >= 0.68:
+            adoption_level = "adoptable"
+            decision_note = "与当前诉求相关，可继续作为偏好约束沿用。"
+        else:
+            adoption_level = "reference_only"
+            decision_note = "命中了部分特征，更适合作为参考样例，不要直接当成当前结论。"
+
+        annotated["adoption_level"] = adoption_level
+        annotated["blocking_reasons"] = blocking_reasons
+        annotated["decision_note"] = decision_note
+        return annotated
+
+    @staticmethod
+    def _group_match_decisions(matches: list[dict]) -> dict[str, list[dict]]:
+        """按是否建议直接沿用，再做一层治理分组。"""
+        grouped = {
+            "adoptable": [],
+            "reference_only": [],
+            "blocked": [],
+        }
+        for item in matches:
+            adoption_level = item.get("adoption_level") or "reference_only"
+            if adoption_level not in grouped:
+                adoption_level = "reference_only"
+            grouped[adoption_level].append(item)
+        return grouped
+
+    @staticmethod
+    def _build_decision_summary(decision_groups: dict[str, list[dict]]) -> str | None:
+        """生成“为什么召回、为什么不直接采用”的治理摘要。"""
+        if not any(decision_groups.values()):
+            return None
+
+        lines: list[str] = []
+        adoptable = decision_groups.get("adoptable") or []
+        blocked = decision_groups.get("blocked") or []
+        reference_only = decision_groups.get("reference_only") or []
+
+        if adoptable:
+            lines.append(
+                "可直接沿用："
+                + "、".join(str(item.get("title") or "未命名记录") for item in adoptable[:2])
+            )
+        if blocked:
+            lines.append(
+                "命中但暂不直接沿用："
+                + "、".join(str(item.get("title") or "未命名记录") for item in blocked[:2])
+            )
+        if reference_only:
+            lines.append(
+                "仅供参考："
+                + "、".join(
+                    str(item.get("title") or "未命名记录")
+                    for item in reference_only[:2]
+                )
+            )
+        return "\n".join(lines)
+
+    def _build_injection_section(
+        self,
+        grouped_matches: dict[str, list[dict]],
+        decision_groups: dict[str, list[dict]],
+    ) -> str:
         """生成给模型使用的结构化历史召回注入段。"""
         if not any(grouped_matches.values()):
             return (
                 "【本轮历史召回】\n"
-                "未找到可直接复用的跨会话历史，请基于当前输入继续确认，"
-                "不要假设之前已经有确定结论。"
+                "未找到可直接复用的跨会话历史，请基于当前输入继续确认，不要假设之前已经有确定结论。"
             )
 
         lines = [
             "【本轮历史召回】",
-            "以下内容来自其他会话或历史记录，仅供参考；若与本轮用户明确要求冲突，以本轮要求为准。",
-            "若命中同一目的地、同一时间窗、同一偏好约束，可优先复用其中已验证过的安排思路；"
+            "以下内容来自其他会话或历史记录，仅供参考；如果与本轮用户明确要求冲突，以本轮要求为准。",
+            "若命中同一目的地、同一时间窗、同一偏好约束，可优先复用其中已验证过的安排思路。",
             "若只命中部分特征，则只把它当作参考样例，不要直接当成当前结论。",
         ]
 
@@ -367,6 +478,27 @@ class RecallService:
                 for item in grouped_matches["related_sessions"][:2]
             )
 
+        if decision_groups.get("adoptable"):
+            lines.append("可优先直接沿用的记录：")
+            lines.extend(
+                self._format_injection_line(item)
+                for item in decision_groups["adoptable"][:3]
+            )
+
+        if decision_groups.get("blocked"):
+            lines.append("虽然命中但本轮先不要直接沿用的记录：")
+            lines.extend(
+                self._format_injection_line(item)
+                for item in decision_groups["blocked"][:2]
+            )
+
+        if decision_groups.get("reference_only"):
+            lines.append("命中但更适合作为参考样例的记录：")
+            lines.extend(
+                self._format_injection_line(item)
+                for item in decision_groups["reference_only"][:2]
+            )
+
         return "\n".join(lines)
 
     @staticmethod
@@ -379,4 +511,10 @@ class RecallService:
         line = f"- [{item.get('record_type')}] {title}：{summary}（匹配度 {score:.2f}）"
         if reasons:
             line += f"；命中原因：{reasons}"
+        decision_note = str(item.get("decision_note") or "").strip()
+        if decision_note:
+            line += f"；处理建议：{decision_note}"
+        blocking_reasons = item.get("blocking_reasons") or []
+        if blocking_reasons:
+            line += f"；暂不直接沿用原因：{'、'.join(blocking_reasons[:2])}"
         return line

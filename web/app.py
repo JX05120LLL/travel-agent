@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Annotated
 
 import uvicorn
-from fastapi import Depends, FastAPI, Form, HTTPException, Request
+from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -33,8 +33,14 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from db.models import User
 from db.session import get_db
+from services.amap_service import AmapService
 from services.comparison_service import ComparisonService
-from services.errors import ServiceNotFoundError
+from services.errors import (
+    ServiceConfigError,
+    ServiceIntegrationError,
+    ServiceNotFoundError,
+    ServiceValidationError,
+)
 from services.message_service import MessageService
 from services.memory_service import MemoryService
 from services.plan_option_service import PlanOptionBranchView, PlanOptionService
@@ -154,6 +160,7 @@ class HistoryRecallLogResponse(BaseModel):
     matched_count: int
     confidence: str | None
     summary: str | None
+    decision_summary: str | None
     created_at: str
 
 
@@ -170,6 +177,8 @@ class SessionCheckpointResponse(BaseModel):
     label: str
     active_plan_option_id: str | None
     active_comparison_id: str | None
+    snapshot_scope: dict | None
+    summary_restore_mode: str | None
     created_at: str
 
 
@@ -390,6 +399,17 @@ def parse_optional_date(value: str | None):
     return datetime.strptime(value, "%Y-%m-%d").date()
 
 
+def _raise_http_for_integration_error(exc: Exception) -> None:
+    """统一映射第三方集成错误到 HTTP 状态码。"""
+    if isinstance(exc, ServiceValidationError):
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if isinstance(exc, ServiceConfigError):
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    if isinstance(exc, ServiceIntegrationError):
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    raise HTTPException(status_code=500, detail="高德服务调用失败") from exc
+
+
 def serialize_plan_option(plan_option_view: PlanOptionBranchView) -> PlanOptionSummaryResponse:
     """把 ORM 候选方案对象转换成接口响应。"""
     plan_option = plan_option_view.plan_option
@@ -467,6 +487,7 @@ def serialize_history_recall_log(item) -> HistoryRecallLogResponse:
         matched_count=item.matched_count,
         confidence=str(item.confidence) if item.confidence is not None else None,
         summary=payload.get("summary"),
+        decision_summary=payload.get("decision_summary"),
         created_at=item.created_at.isoformat(),
     )
 
@@ -479,6 +500,8 @@ def serialize_session_checkpoint(item) -> SessionCheckpointResponse:
         label=payload.get("label") or "未命名检查点",
         active_plan_option_id=payload.get("active_plan_option_id"),
         active_comparison_id=payload.get("active_comparison_id"),
+        snapshot_scope=payload.get("snapshot_scope"),
+        summary_restore_mode=payload.get("summary_restore_mode"),
         created_at=item.created_at.isoformat(),
     )
 
@@ -579,6 +602,231 @@ async def index(request: Request):
 async def favicon():
     """避免浏览器默认请求 favicon 时出现 404 噪音。"""
     return Response(status_code=204)
+
+
+@app.get("/integrations/amap/geocode")
+async def amap_geocode(
+    user: CurrentUserDep,
+    address: str = Query(..., description="待解析地址"),
+    city: str | None = Query(default=None, description="限定城市，可选"),
+):
+    """地址转经纬度。"""
+    service = AmapService()
+    try:
+        return service.geocode(address=address, city=city)
+    except Exception as exc:  # pragma: no cover - 统一映射出口
+        _raise_http_for_integration_error(exc)
+
+
+@app.get("/integrations/amap/regeo")
+async def amap_reverse_geocode(
+    user: CurrentUserDep,
+    location: str = Query(..., description="经纬度，格式 lng,lat"),
+    radius: int = Query(default=1000, ge=1, le=3000, description="查询半径（米）"),
+    extensions: str = Query(default="base", description="base 或 all"),
+):
+    """经纬度转地址。"""
+    service = AmapService()
+    try:
+        return service.reverse_geocode(
+            location=location,
+            radius=radius,
+            extensions=extensions,
+        )
+    except Exception as exc:  # pragma: no cover - 统一映射出口
+        _raise_http_for_integration_error(exc)
+
+
+@app.get("/integrations/amap/poi")
+async def amap_search_poi(
+    user: CurrentUserDep,
+    keywords: str = Query(..., description="POI 关键字"),
+    city: str | None = Query(default=None, description="城市名称，可选"),
+    city_limit: bool = Query(default=True, description="是否限制在 city 内搜索"),
+    types: str | None = Query(default=None, description="POI 类型编码，可选"),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=10, ge=1, le=25),
+):
+    """POI 搜索。"""
+    service = AmapService()
+    try:
+        return service.search_poi(
+            keywords=keywords,
+            city=city,
+            city_limit=city_limit,
+            types=types,
+            page=page,
+            page_size=page_size,
+        )
+    except Exception as exc:  # pragma: no cover - 统一映射出口
+        _raise_http_for_integration_error(exc)
+
+
+@app.get("/integrations/amap/route/driving")
+async def amap_route_driving(
+    user: CurrentUserDep,
+    origin: str = Query(..., description="起点经纬度，格式 lng,lat"),
+    destination: str = Query(..., description="终点经纬度，格式 lng,lat"),
+    strategy: int = Query(default=0, ge=0, le=20),
+    extensions: str = Query(default="base", description="base 或 all"),
+):
+    """驾车路线规划。"""
+    service = AmapService()
+    try:
+        return service.route_driving(
+            origin=origin,
+            destination=destination,
+            strategy=strategy,
+            extensions=extensions,
+        )
+    except Exception as exc:  # pragma: no cover - 统一映射出口
+        _raise_http_for_integration_error(exc)
+
+
+@app.get("/integrations/amap/route/walking")
+async def amap_route_walking(
+    user: CurrentUserDep,
+    origin: str = Query(..., description="起点经纬度，格式 lng,lat"),
+    destination: str = Query(..., description="终点经纬度，格式 lng,lat"),
+):
+    """步行路线规划。"""
+    service = AmapService()
+    try:
+        return service.route_walking(origin=origin, destination=destination)
+    except Exception as exc:  # pragma: no cover - 统一映射出口
+        _raise_http_for_integration_error(exc)
+
+
+@app.get("/integrations/amap/route/transit")
+async def amap_route_transit(
+    user: CurrentUserDep,
+    origin: str = Query(..., description="起点经纬度，格式 lng,lat"),
+    destination: str = Query(..., description="终点经纬度，格式 lng,lat"),
+    city: str = Query(..., description="公交规划所在城市"),
+    cityd: str | None = Query(default=None, description="终点城市，可选"),
+    strategy: int = Query(default=0, ge=0, le=5),
+    nightflag: int = Query(default=0, ge=0, le=1),
+    extensions: str = Query(default="base", description="base 或 all"),
+):
+    """公交/地铁综合路线规划。"""
+    service = AmapService()
+    try:
+        return service.route_transit(
+            origin=origin,
+            destination=destination,
+            city=city,
+            cityd=cityd,
+            strategy=strategy,
+            nightflag=nightflag,
+            extensions=extensions,
+        )
+    except Exception as exc:  # pragma: no cover - 统一映射出口
+        _raise_http_for_integration_error(exc)
+
+
+@app.get("/integrations/amap/weather")
+async def amap_weather(
+    user: CurrentUserDep,
+    city: str = Query(..., description="城市名或城市 adcode"),
+    extensions: str = Query(default="base", description="base 为实况，all 为预报"),
+):
+    """城市天气（高德版本）。"""
+    service = AmapService()
+    try:
+        return service.weather(city=city, extensions=extensions)
+    except Exception as exc:  # pragma: no cover - 统一映射出口
+        _raise_http_for_integration_error(exc)
+
+
+@app.get("/integrations/amap/nearby")
+async def amap_search_nearby(
+    user: CurrentUserDep,
+    location: str = Query(..., description="中心点经纬度，格式 lng,lat"),
+    keywords: str | None = Query(default=None, description="关键词，可选"),
+    types: str | None = Query(default=None, description="类型编码，可选"),
+    radius: int = Query(default=3000, ge=1, le=50000),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=10, ge=1, le=25),
+    sortrule: str = Query(default="distance", description="distance 或 weight"),
+):
+    """周边搜索。"""
+    service = AmapService()
+    try:
+        return service.search_nearby(
+            location=location,
+            keywords=keywords,
+            types=types,
+            radius=radius,
+            page=page,
+            page_size=page_size,
+            sortrule=sortrule,
+        )
+    except Exception as exc:  # pragma: no cover - 统一映射出口
+        _raise_http_for_integration_error(exc)
+
+
+@app.get("/integrations/amap/nearby/food")
+async def amap_search_nearby_food(
+    user: CurrentUserDep,
+    location: str = Query(..., description="中心点经纬度，格式 lng,lat"),
+    radius: int = Query(default=3000, ge=1, le=10000),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=10, ge=1, le=25),
+):
+    """周边美食搜索。"""
+    service = AmapService()
+    try:
+        return service.search_nearby_food(
+            location=location,
+            radius=radius,
+            page=page,
+            page_size=page_size,
+        )
+    except Exception as exc:  # pragma: no cover - 统一映射出口
+        _raise_http_for_integration_error(exc)
+
+
+@app.get("/integrations/amap/nearby/stays")
+async def amap_search_nearby_stays(
+    user: CurrentUserDep,
+    location: str = Query(..., description="中心点经纬度，格式 lng,lat"),
+    keyword: str | None = Query(default=None, description="可选：酒店/民宿"),
+    radius: int = Query(default=5000, ge=1, le=15000),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=10, ge=1, le=25),
+    min_rating: float | None = Query(default=None, ge=0, le=5),
+    max_budget: float | None = Query(default=None, gt=0),
+    max_distance_m: int | None = Query(default=None, gt=0),
+    include_unknown_budget: bool = Query(default=True),
+    include_unknown_rating: bool = Query(default=True),
+):
+    """周边住宿搜索（酒店/民宿）。"""
+    service = AmapService()
+    try:
+        if (
+            min_rating is not None
+            or max_budget is not None
+            or max_distance_m is not None
+        ):
+            return service.search_stays_with_filters(
+                location=location,
+                radius=radius,
+                limit=page_size,
+                min_rating=min_rating,
+                max_budget=max_budget,
+                max_distance_m=max_distance_m,
+                include_unknown_budget=include_unknown_budget,
+                include_unknown_rating=include_unknown_rating,
+            )
+        return service.search_nearby_stay(
+            location=location,
+            keyword=keyword,
+            radius=radius,
+            page=page,
+            page_size=page_size,
+        )
+    except Exception as exc:  # pragma: no cover - 统一映射出口
+        _raise_http_for_integration_error(exc)
 
 
 @app.post("/sessions", response_model=SessionSummaryResponse)

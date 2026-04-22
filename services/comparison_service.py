@@ -82,13 +82,14 @@ class ComparisonService:
             session_id=session_id,
             user_id=user_id,
         )
+        unique_plan_option_ids = list(dict.fromkeys(plan_option_ids))
         plan_options = [
             self.plan_option_service.get_plan_option_or_raise(
                 session=session,
                 plan_option_id=plan_option_id,
                 user_id=user_id,
             )
-            for plan_option_id in plan_option_ids
+            for plan_option_id in unique_plan_option_ids
         ]
         if len(plan_options) < 2:
             raise ValueError("至少需要两个候选方案才能发起比较。")
@@ -118,6 +119,12 @@ class ComparisonService:
             comparison.comparison_dimensions = list(DEFAULT_COMPARISON_DIMENSIONS)
             clear_plan_comparison_items(self.db, comparison=comparison)
 
+        if (
+            session.active_plan_option_id is not None
+            and session.active_plan_option_id in {item.id for item in plan_options}
+        ):
+            comparison.recommended_option_id = session.active_plan_option_id
+
         for index, option in enumerate(plan_options, start=1):
             add_plan_comparison_item(
                 self.db,
@@ -142,6 +149,20 @@ class ComparisonService:
             event_payload={
                 "comparison_name": comparison.name,
                 "plan_option_ids": [str(item.id) for item in plan_options],
+                "recommended_option_id": (
+                    str(comparison.recommended_option_id)
+                    if comparison.recommended_option_id
+                    else None
+                ),
+                "workspace_state": {
+                    "active_plan_option_id": (
+                        str(session.active_plan_option_id)
+                        if session.active_plan_option_id
+                        else None
+                    ),
+                    "active_comparison_id": str(comparison.id),
+                    "comparison_status": comparison.status,
+                },
             },
         )
 
