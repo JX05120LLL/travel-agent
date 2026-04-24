@@ -1,13 +1,8 @@
-"""高德 Web API 客户端。
-
-这一层只处理：
-1. 鉴权与环境变量读取。
-2. HTTP 请求与通用错误处理。
-3. 高德返回状态校验。
-"""
+﻿"""高德 Web API 客户端。"""
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
 from typing import Any
@@ -16,12 +11,12 @@ import httpx
 from dotenv import load_dotenv
 
 from services.errors import ServiceConfigError, ServiceIntegrationError
+from services.external_call_guard import ExternalCallPolicy, external_call_guard
 
 load_dotenv()
 
 
 def _compact_params(params: dict[str, Any]) -> dict[str, Any]:
-    """清理空参数，避免把 None 透传到第三方接口。"""
     return {
         key: value
         for key, value in params.items()
@@ -31,15 +26,12 @@ def _compact_params(params: dict[str, Any]) -> dict[str, Any]:
 
 @dataclass(slots=True)
 class AmapClient:
-    """高德 API 客户端。"""
-
     api_key: str
     base_url: str = "https://restapi.amap.com/v3"
     timeout_seconds: float = 10.0
 
     @classmethod
     def from_env(cls) -> "AmapClient":
-        """从环境变量创建客户端。"""
         api_key = (
             os.getenv("AMAP_API_KEY", "").strip()
             or os.getenv("AMAP_MAPS_API_KEY", "").strip()
@@ -51,14 +43,36 @@ class AmapClient:
         return cls(api_key=api_key)
 
     def _request(self, path: str, *, params: dict[str, Any]) -> dict[str, Any]:
-        """统一执行 GET 请求并校验高德返回状态。"""
         request_params = _compact_params(
             {
                 "key": self.api_key,
                 **params,
             }
         )
+        cache_key = json.dumps(
+            {
+                "path": path,
+                "params": _compact_params(params),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        policy = ExternalCallPolicy(
+            provider="amap",
+            operation=path,
+            ttl_seconds=self._cache_ttl_for_path(path),
+            rate_limit=180,
+            rate_window_seconds=60,
+            circuit_breaker_threshold=5,
+            circuit_open_seconds=60,
+        )
+        return external_call_guard.execute(
+            policy=policy,
+            cache_key=cache_key,
+            func=lambda: self._do_request(path, request_params=request_params),
+        )
 
+    def _do_request(self, path: str, *, request_params: dict[str, Any]) -> dict[str, Any]:
         try:
             response = httpx.get(
                 f"{self.base_url}{path}",
@@ -90,13 +104,26 @@ class AmapClient:
             if infocode:
                 error_message += f"（infocode={infocode}）"
             if detail:
-                error_message += f"，{detail}"
+                error_message += f"（{detail}）"
             raise ServiceIntegrationError(error_message)
 
         return payload
 
+    @staticmethod
+    def _cache_ttl_for_path(path: str) -> int:
+        ttl_mapping = {
+            "/geocode/geo": 6 * 60 * 60,
+            "/geocode/regeo": 60 * 60,
+            "/place/text": 15 * 60,
+            "/place/around": 10 * 60,
+            "/direction/driving": 15 * 60,
+            "/direction/walking": 15 * 60,
+            "/direction/transit/integrated": 15 * 60,
+            "/weather/weatherInfo": 30 * 60,
+        }
+        return ttl_mapping.get(path, 5 * 60)
+
     def geocode(self, *, address: str, city: str | None = None) -> dict[str, Any]:
-        """地理编码：地址 -> 经纬度。"""
         return self._request(
             "/geocode/geo",
             params={
@@ -113,7 +140,6 @@ class AmapClient:
         extensions: str = "base",
         roadlevel: int = 0,
     ) -> dict[str, Any]:
-        """逆地理编码：经纬度 -> 地址。"""
         return self._request(
             "/geocode/regeo",
             params={
@@ -133,8 +159,7 @@ class AmapClient:
         types: str | None = None,
         page: int = 1,
         offset: int = 10,
-        ) -> dict[str, Any]:
-        """POI 关键字搜索。"""
+    ) -> dict[str, Any]:
         return self._request(
             "/place/text",
             params={
@@ -159,7 +184,6 @@ class AmapClient:
         page: int = 1,
         offset: int = 10,
     ) -> dict[str, Any]:
-        """周边检索：以经纬度为中心搜索周边点位。"""
         return self._request(
             "/place/around",
             params={
@@ -182,7 +206,6 @@ class AmapClient:
         strategy: int = 0,
         extensions: str = "base",
     ) -> dict[str, Any]:
-        """驾车路线规划。"""
         return self._request(
             "/direction/driving",
             params={
@@ -199,7 +222,6 @@ class AmapClient:
         origin: str,
         destination: str,
     ) -> dict[str, Any]:
-        """步行路线规划。"""
         return self._request(
             "/direction/walking",
             params={
@@ -219,7 +241,6 @@ class AmapClient:
         nightflag: int = 0,
         extensions: str = "base",
     ) -> dict[str, Any]:
-        """公交/地铁综合路线规划。"""
         return self._request(
             "/direction/transit/integrated",
             params={
@@ -234,7 +255,6 @@ class AmapClient:
         )
 
     def weather(self, *, city: str, extensions: str = "base") -> dict[str, Any]:
-        """天气查询（实况或预报）。"""
         return self._request(
             "/weather/weatherInfo",
             params={

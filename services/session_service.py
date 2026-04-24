@@ -31,6 +31,35 @@ from services.plan_option_service import PlanOptionService
 from services.recall_service import RecallService
 from services.trip_service import TripService
 
+ONE_STOP_PLANNING_ACTIONS = {
+    "create_new_option",
+    "update_current_option",
+    "expand_current_option",
+    "continue_current_option",
+}
+ONE_STOP_PLANNING_KEYWORDS = (
+    "旅游",
+    "旅行",
+    "行程",
+    "攻略",
+    "路线",
+    "酒店",
+    "住宿",
+    "民宿",
+    "景点",
+    "美食",
+    "自由行",
+    "度假",
+    "周末",
+    "假期",
+    "公交",
+    "地铁",
+    "通勤",
+    "安排",
+    "规划",
+    "怎么玩",
+)
+
 
 def _truncate_text(text: str | None, max_length: int = 180) -> str:
     """把文本裁剪到适合摘要展示的长度。"""
@@ -38,6 +67,42 @@ def _truncate_text(text: str | None, max_length: int = 180) -> str:
     if len(clean) <= max_length:
         return clean
     return f"{clean[: max_length - 1]}…"
+
+
+def _looks_like_travel_planning_request(text: str) -> bool:
+    """识别这轮是否仍然属于旅行规划主线，而不是纯转发类动作。"""
+    normalized = (text or "").strip()
+    if not normalized:
+        return False
+    if any(keyword in normalized for keyword in ("发到飞书", "推送飞书", "发到企业微信", "推送企微")):
+        return False
+    return any(keyword in normalized for keyword in ONE_STOP_PLANNING_KEYWORDS)
+
+
+def _build_one_stop_planning_section(
+    *,
+    route: SessionRouteResult,
+    user_input: str,
+) -> str | None:
+    """在运行时上下文里强化 P2 的一条龙规划目标。"""
+    if route.action not in ONE_STOP_PLANNING_ACTIONS:
+        return None
+
+    if route.action not in {"create_new_option", "expand_current_option"} and not _looks_like_travel_planning_request(
+        user_input
+    ):
+        return None
+
+    return (
+        "【本轮输出要求】\n"
+        "当前请优先按“一条龙旅行规划”回答，不要等用户继续追问。"
+        "请尽量一次性补齐：到达方式、酒店推荐、景点推荐与顺序、"
+        "景点间交通、美食推荐、每日行程（上午/下午/晚上）、预算汇总、注意事项。\n"
+        "如果用户给出了出发地、日期或明确的跨城出行线索，请主动补上高铁/火车到达建议，"
+        "至少给出推荐车次、候选车次、耗时、票价参考和12306官方提醒。\n"
+        "如果缺少非关键条件，请先基于合理假设给出首版完整方案，并单独说明“本次假设”；"
+        "只有在缺少目的地、出发地、出行天数或具体日期等关键条件且无法继续时，才简短追问。"
+    )
 
 
 @dataclass(slots=True)
@@ -155,6 +220,13 @@ class SessionService:
                 active_plan_option_id=active_plan_option.id,
                 result=result,
             )
+
+        one_stop_section = _build_one_stop_planning_section(
+            route=route,
+            user_input=user_input,
+        )
+        if one_stop_section and one_stop_section not in result.extra_sections:
+            result.extra_sections.append(one_stop_section)
 
         if route.action == "compare_options":
             result.comparison = self._execute_compare_options(

@@ -32,6 +32,7 @@ STATIC_DIR = WEB_DIR / "static"
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from db.models import User
+from db.repositories.session_event_repository import create_session_event
 from db.session import get_db
 from services.amap_service import AmapService
 from services.comparison_service import ComparisonService
@@ -43,10 +44,12 @@ from services.errors import (
 )
 from services.message_service import MessageService
 from services.memory_service import MemoryService
+from services.external_call_guard import external_call_guard
 from services.plan_option_service import PlanOptionBranchView, PlanOptionService
 from services.session_management_service import SessionManagementService
 from services.session_service import SessionService
 from services.session_workspace_service import SessionWorkspaceService
+from services.trip_export_service import TripExportService
 from services.trip_service import TripService
 from web.auth import get_current_user
 
@@ -67,6 +70,8 @@ class SessionSummaryResponse(BaseModel):
     status: str
     summary: str | None
     latest_user_message: str | None
+    is_pinned: bool
+    pinned_at: str | None
     created_at: str
     updated_at: str
     last_message_at: str
@@ -76,6 +81,12 @@ class SessionRenameRequest(BaseModel):
     """重命名会话请求。"""
 
     title: str
+
+
+class SessionPinRequest(BaseModel):
+    """会话置顶状态请求。"""
+
+    is_pinned: bool
 
 
 class MessageResponse(BaseModel):
@@ -226,6 +237,10 @@ class TripSummaryResponse(BaseModel):
     primary_destination: str | None
     total_days: int | None
     summary: str | None
+    structured_context: dict | None
+    delivery_payload: dict | None
+    document_markdown: str | None
+    price_confidence_summary: dict | None
     selected_from_comparison_id: str | None
     confirmed_at: str | None
     updated_at: str
@@ -249,6 +264,10 @@ class TripDetailResponse(BaseModel):
     total_days: int | None
     summary: str | None
     plan_markdown: str | None
+    structured_context: dict | None
+    delivery_payload: dict | None
+    document_markdown: str | None
+    price_confidence_summary: dict | None
     selected_from_comparison_id: str | None
     destinations: list[dict]
     itinerary_days: list[dict]
@@ -285,6 +304,7 @@ class PlanOptionSummaryResponse(BaseModel):
     primary_destination: str | None
     total_days: int | None
     summary: str | None
+    structured_context: dict | None
     is_selected: bool
     updated_at: str
 
@@ -371,6 +391,8 @@ def serialize_session(session) -> SessionSummaryResponse:
         status=session.status,
         summary=session.summary,
         latest_user_message=session.latest_user_message,
+        is_pinned=bool(getattr(session, "is_pinned", False)),
+        pinned_at=session.pinned_at.isoformat() if getattr(session, "pinned_at", None) else None,
         created_at=session.created_at.isoformat(),
         updated_at=session.updated_at.isoformat(),
         last_message_at=session.last_message_at.isoformat(),
@@ -410,9 +432,183 @@ def _raise_http_for_integration_error(exc: Exception) -> None:
     raise HTTPException(status_code=500, detail="高德服务调用失败") from exc
 
 
+def _auto_sync_workspace_after_assistant_reply(
+    *,
+    db: Session,
+    session,
+    user_id: uuid.UUID,
+    session_action,
+) -> dict:
+    """助手回复完成后，自动同步到 plan option / trip。"""
+    plan_option_service = PlanOptionService(db)
+    comparison_service = ComparisonService(db)
+    trip_service = TripService(db)
+    memory_service = MemoryService(db)
+
+    synced_plan_option_id = None
+    synced_comparison = None
+    synced_trip = None
+    comparison_candidate_ids: list[uuid.UUID] = []
+
+    if session.active_plan_option_id is not None:
+        try:
+            synced_view = plan_option_service.sync_option_from_latest_message(
+                session_id=session.id,
+                plan_option_id=session.active_plan_option_id,
+                user_id=user_id,
+                activate=True,
+                commit=False,
+            )
+            synced_plan_option_id = synced_view.plan_option.id
+            comparison_candidate_ids.append(synced_plan_option_id)
+            try:
+                created_items = plan_option_service.create_options_from_latest_message(
+                    session_id=session.id,
+                    user_id=user_id,
+                    commit=False,
+                )
+                comparison_candidate_ids.extend(
+                    item.plan_option.id
+                    for item in created_items
+                )
+            except ValueError:
+                pass
+        except ValueError:
+            synced_plan_option_id = session.active_plan_option_id
+            if synced_plan_option_id is not None:
+                comparison_candidate_ids.append(synced_plan_option_id)
+    else:
+        try:
+            created_items = plan_option_service.create_options_from_latest_message(
+                session_id=session.id,
+                user_id=user_id,
+                commit=False,
+            )
+            if created_items:
+                synced_plan_option_id = created_items[0].plan_option.id
+                comparison_candidate_ids.extend(
+                    item.plan_option.id
+                    for item in created_items
+                )
+        except ValueError:
+            synced_plan_option_id = None
+
+    deduped_comparison_candidate_ids = list(dict.fromkeys(comparison_candidate_ids))
+    if len(deduped_comparison_candidate_ids) > 1:
+        synced_comparison = comparison_service.create_or_update_comparison(
+            session_id=session.id,
+            user_id=user_id,
+            plan_option_ids=deduped_comparison_candidate_ids,
+            commit=False,
+        )
+        if synced_comparison.recommended_option_id is not None:
+            synced_plan_option_id = synced_comparison.recommended_option_id
+
+    if synced_plan_option_id is not None:
+        try:
+            synced_trip = trip_service.sync_trip_from_plan_option(
+                session_id=session.id,
+                user_id=user_id,
+                plan_option_id=synced_plan_option_id,
+                comparison_id=(
+                    synced_comparison.id
+                    if synced_comparison is not None
+                    else session.active_comparison_id
+                ),
+                commit=False,
+            )
+        except ValueError:
+            synced_trip = None
+
+    context_payload = memory_service.build_session_context_payload(session=session)
+    comparison_decision_payload = comparison_service.build_decision_payload(
+        synced_comparison
+    )
+    recommended_plan_option_id = comparison_decision_payload.get("recommended_plan_option_id")
+    if recommended_plan_option_id is None and synced_plan_option_id is not None:
+        recommended_plan_option_id = str(synced_plan_option_id)
+
+    recommended_plan_title = comparison_decision_payload.get("recommended_plan_title")
+    if recommended_plan_title is None:
+        recommended_plan_title = context_payload.get("active_plan_title")
+
+    alternate_plan_titles = comparison_decision_payload.get("alternate_plan_titles") or []
+    recommendation_reasons = comparison_decision_payload.get("recommendation_reasons") or []
+    external_governance = {
+        "amap": external_call_guard.snapshot("amap"),
+        "fliggy_hotel": external_call_guard.snapshot("fliggy_hotel"),
+        "railway12306": external_call_guard.snapshot("railway12306"),
+    }
+    synced_constraints = dict(getattr(synced_trip, "constraints", None) or {}) if synced_trip is not None else {}
+    price_confidence_summary = (
+        dict(synced_constraints.get("price_confidence_summary") or {})
+        if synced_constraints
+        else {}
+    )
+    delivery_payload = dict(synced_constraints.get("delivery_payload") or {}) if synced_constraints else {}
+    official_booking_notice = None
+    booking_notices = delivery_payload.get("booking_notices")
+    if isinstance(booking_notices, list):
+        for notice in booking_notices:
+            if isinstance(notice, dict) and notice.get("notice"):
+                official_booking_notice = notice
+                break
+
+    create_session_event(
+        db,
+        session_id=session.id,
+        user_id=user_id,
+        plan_option_id=synced_plan_option_id,
+        comparison_id=synced_comparison.id if synced_comparison is not None else None,
+        trip_id=synced_trip.id if synced_trip is not None else None,
+        event_type="workspace_auto_synced",
+        event_payload={
+            "route_action": session_action.route.action,
+            "auto_synced_plan": bool(context_payload.get("active_plan_option_id")),
+            "auto_compared_options": synced_comparison is not None,
+            "auto_synced_trip": synced_trip is not None,
+            "comparison_candidate_ids": [str(item) for item in deduped_comparison_candidate_ids],
+            "recommended_plan_option_id": recommended_plan_option_id,
+            "recommended_plan_title": recommended_plan_title,
+            "alternate_plan_titles": alternate_plan_titles,
+            "recommendation_reasons": recommendation_reasons,
+            "active_trip_id": str(synced_trip.id) if synced_trip is not None else None,
+            "active_trip_title": synced_trip.title if synced_trip is not None else None,
+            "external_governance": external_governance,
+            "trip_document_ready": bool(synced_constraints.get("document_markdown")),
+            "hotel_price_status": price_confidence_summary.get("hotel_price_status"),
+            "rail_ticket_status": price_confidence_summary.get("rail_ticket_status"),
+            "official_booking_notice": official_booking_notice,
+        },
+    )
+
+    return {
+        "route_action": session_action.route.action,
+        "active_plan_option_id": context_payload.get("active_plan_option_id"),
+        "active_plan_summary": context_payload.get("active_plan_summary"),
+        "active_comparison_id": context_payload.get("active_comparison_id"),
+        "active_comparison_summary": context_payload.get("active_comparison_summary"),
+        "recommended_plan_option_id": recommended_plan_option_id,
+        "recommended_plan_title": recommended_plan_title,
+        "alternate_plan_titles": alternate_plan_titles,
+        "recommendation_reasons": recommendation_reasons,
+        "active_trip_id": str(synced_trip.id) if synced_trip is not None else None,
+        "active_trip_title": synced_trip.title if synced_trip is not None else None,
+        "auto_synced_plan": bool(context_payload.get("active_plan_option_id")),
+        "auto_compared_options": synced_comparison is not None,
+        "auto_synced_trip": synced_trip is not None,
+        "external_governance": external_governance,
+        "trip_document_ready": bool(synced_constraints.get("document_markdown")),
+        "hotel_price_status": price_confidence_summary.get("hotel_price_status"),
+        "rail_ticket_status": price_confidence_summary.get("rail_ticket_status"),
+        "official_booking_notice": official_booking_notice,
+    }
+
+
 def serialize_plan_option(plan_option_view: PlanOptionBranchView) -> PlanOptionSummaryResponse:
     """把 ORM 候选方案对象转换成接口响应。"""
     plan_option = plan_option_view.plan_option
+    constraints = getattr(plan_option, "constraints", None) or {}
     return PlanOptionSummaryResponse(
         id=str(plan_option.id),
         title=plan_option.title,
@@ -431,6 +627,7 @@ def serialize_plan_option(plan_option_view: PlanOptionBranchView) -> PlanOptionS
         primary_destination=plan_option.primary_destination,
         total_days=plan_option.total_days,
         summary=plan_option.summary,
+        structured_context=constraints.get("structured_context"),
         is_selected=plan_option.is_selected,
         updated_at=plan_option.updated_at.isoformat(),
     )
@@ -521,6 +718,7 @@ def serialize_plan_comparison(item) -> PlanComparisonSummaryResponse:
 
 def serialize_trip_summary(item) -> TripSummaryResponse:
     """把正式行程对象转换成摘要响应。"""
+    constraints = getattr(item, "constraints", None) or {}
     return TripSummaryResponse(
         id=str(item.id),
         title=item.title,
@@ -528,6 +726,10 @@ def serialize_trip_summary(item) -> TripSummaryResponse:
         primary_destination=item.primary_destination,
         total_days=item.total_days,
         summary=item.summary,
+        structured_context=constraints.get("structured_context"),
+        delivery_payload=constraints.get("delivery_payload"),
+        document_markdown=constraints.get("document_markdown"),
+        price_confidence_summary=constraints.get("price_confidence_summary"),
         source_plan_option_id=str(item.source_plan_option_id) if item.source_plan_option_id else None,
         selected_from_comparison_id=(
             str(item.selected_from_comparison_id)
@@ -541,6 +743,7 @@ def serialize_trip_summary(item) -> TripSummaryResponse:
 
 def serialize_trip_detail(item) -> TripDetailResponse:
     """把正式行程对象转换成详情响应。"""
+    constraints = getattr(item, "constraints", None) or {}
     return TripDetailResponse(
         id=str(item.id),
         title=item.title,
@@ -549,6 +752,10 @@ def serialize_trip_detail(item) -> TripDetailResponse:
         total_days=item.total_days,
         summary=item.summary,
         plan_markdown=item.plan_markdown,
+        structured_context=constraints.get("structured_context"),
+        delivery_payload=constraints.get("delivery_payload"),
+        document_markdown=constraints.get("document_markdown"),
+        price_confidence_summary=constraints.get("price_confidence_summary"),
         source_plan_option_id=str(item.source_plan_option_id) if item.source_plan_option_id else None,
         selected_from_comparison_id=(
             str(item.selected_from_comparison_id)
@@ -910,6 +1117,35 @@ async def rename_chat_session(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    return serialize_session(session)
+
+
+@app.patch("/sessions/{session_id}/pin", response_model=SessionSummaryResponse)
+async def pin_chat_session(
+    session_id: str,
+    payload: SessionPinRequest,
+    user: CurrentUserDep,
+    db: Session = Depends(get_db),
+):
+    """更新会话置顶状态。"""
+    try:
+        session_uuid = uuid.UUID(session_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="session_id 格式不正确") from exc
+
+    session_service = SessionManagementService(db)
+    try:
+        session = session_service.get_session_or_raise(
+            session_id=session_uuid,
+            user_id=user.id,
+        )
+    except ServiceNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    session = session_service.set_session_pinned(
+        session=session,
+        is_pinned=payload.is_pinned,
+    )
     return serialize_session(session)
 
 
@@ -1506,6 +1742,81 @@ async def get_session_trip_detail(
     return serialize_trip_detail(trip)
 
 
+@app.get("/sessions/{session_id}/trips/{trip_id}/export/markdown")
+async def export_session_trip_markdown(
+    session_id: str,
+    trip_id: str,
+    user: CurrentUserDep,
+    db: Session = Depends(get_db),
+):
+    """导出正式 Trip 的 Markdown 行程单。"""
+    try:
+        session_uuid = uuid.UUID(session_id)
+        trip_uuid = uuid.UUID(trip_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="ID 格式不正确") from exc
+
+    trip_service = TripService(db)
+    export_service = TripExportService()
+    try:
+        trip = trip_service.get_trip_or_raise(
+            session_id=session_uuid,
+            trip_id=trip_uuid,
+            user_id=user.id,
+        )
+    except ServiceNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    markdown_text = export_service.ensure_document_markdown(trip)
+    filename = export_service.build_markdown_filename(trip)
+    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    return Response(
+        content=markdown_text.encode("utf-8"),
+        media_type="text/markdown; charset=utf-8",
+        headers=headers,
+    )
+
+
+@app.get("/sessions/{session_id}/trips/{trip_id}/export/pdf")
+async def export_session_trip_pdf(
+    session_id: str,
+    trip_id: str,
+    user: CurrentUserDep,
+    db: Session = Depends(get_db),
+):
+    """导出正式 Trip 的 PDF 行程单。"""
+    try:
+        session_uuid = uuid.UUID(session_id)
+        trip_uuid = uuid.UUID(trip_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="ID 格式不正确") from exc
+
+    trip_service = TripService(db)
+    export_service = TripExportService()
+    try:
+        trip = trip_service.get_trip_or_raise(
+            session_id=session_uuid,
+            trip_id=trip_uuid,
+            user_id=user.id,
+        )
+    except ServiceNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    markdown_text = export_service.ensure_document_markdown(trip)
+    try:
+        pdf_bytes = export_service.build_pdf_bytes(trip=trip, markdown_text=markdown_text)
+    except ServiceConfigError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    filename = export_service.build_pdf_filename(trip)
+    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers=headers,
+    )
+
+
 @app.post("/chat")
 async def chat(
     user: CurrentUserDep,
@@ -1638,13 +1949,27 @@ async def chat(
                     yield format_sse("token", {"content": text})
 
             if final_answer.strip():
-                message_service.save_assistant_message(
+                assistant_message = message_service.save_assistant_message(
                     session=session,
                     user_id=user.id,
                     content=final_answer,
                     tool_outputs=tool_outputs,
                     has_error=False,
+                    commit=False,
                 )
+                workspace_payload = _auto_sync_workspace_after_assistant_reply(
+                    db=db,
+                    session=session,
+                    user_id=user.id,
+                    session_action=session_action,
+                )
+                message_metadata = dict(getattr(assistant_message, "message_metadata", None) or {})
+                message_metadata["workspace_sync"] = workspace_payload
+                assistant_message.message_metadata = message_metadata
+                db.commit()
+                db.refresh(session)
+                db.refresh(assistant_message)
+                yield format_sse("workspace", workspace_payload)
             yield format_sse("done", {"status": "ok"})
         except Exception as exc:
             error_message = f"请求失败：{exc}"

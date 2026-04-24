@@ -76,8 +76,10 @@ class CheckpointService:
                     "title": item.title,
                     "status": item.status,
                     "is_selected": item.is_selected,
+                    "planning_mode": getattr(item, "planning_mode", "single_city"),
                     "primary_destination": item.primary_destination,
                     "total_days": item.total_days,
+                    "constraints": dict(getattr(item, "constraints", None) or {}),
                     "summary": item.summary,
                     "plan_markdown": item.plan_markdown,
                     "version_no": item.version_no,
@@ -166,8 +168,10 @@ class CheckpointService:
                     branch_name=snapshot.get("branch_name"),
                     title=snapshot.get("title") or "恢复方案",
                     status=snapshot.get("status") or "draft",
+                    planning_mode=snapshot.get("planning_mode") or "single_city",
                     primary_destination=snapshot.get("primary_destination"),
                     total_days=snapshot.get("total_days"),
+                    constraints=dict(snapshot.get("constraints") or {}),
                     summary=snapshot.get("summary"),
                     plan_markdown=snapshot.get("plan_markdown"),
                     version_no=snapshot.get("version_no") or 1,
@@ -194,11 +198,17 @@ class CheckpointService:
                 option.branch_name = snapshot.get("branch_name")
                 option.title = snapshot.get("title") or option.title
                 option.status = snapshot.get("status") or option.status
+                option.planning_mode = (
+                    snapshot.get("planning_mode")
+                    or getattr(option, "planning_mode", None)
+                    or "single_city"
+                )
                 option.primary_destination = snapshot.get("primary_destination")
                 option.total_days = snapshot.get("total_days")
+                option.constraints = dict(snapshot.get("constraints") or {})
                 option.summary = snapshot.get("summary")
                 option.plan_markdown = snapshot.get("plan_markdown")
-                option.version_no = snapshot.get("version_no") or option.version_no
+                option.version_no = snapshot.get("version_no") or getattr(option, "version_no", 1)
                 option.is_selected = bool(snapshot.get("is_selected"))
                 option.archived_at = None if option.status != "archived" else datetime.now()
 

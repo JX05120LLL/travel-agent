@@ -118,6 +118,35 @@ class SessionManagementService:
 
         return session
 
+    def set_session_pinned(
+        self,
+        *,
+        session: ChatSession,
+        is_pinned: bool,
+        commit: bool = True,
+    ) -> ChatSession:
+        """更新会话置顶状态。"""
+        normalized = bool(is_pinned)
+        session.is_pinned = normalized
+        session.pinned_at = datetime.now() if normalized else None
+        session.updated_at = datetime.now()
+        create_session_event(
+            self.db,
+            session_id=session.id,
+            user_id=session.user_id,
+            event_type="session_pinned_changed",
+            event_payload={
+                "title": session.title,
+                "is_pinned": normalized,
+            },
+        )
+
+        if commit:
+            self.db.commit()
+            self.db.refresh(session)
+
+        return session
+
     def archive_session(
         self,
         *,

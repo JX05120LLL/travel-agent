@@ -32,3 +32,5 @@ psycopg[binary]
 # ── 工具库 ───────────────────────────────
 python-dotenv
 pydantic
+markdown
+reportlab

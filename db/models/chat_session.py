@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from db.models.common import (
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -49,6 +50,10 @@ class ChatSession(Base):
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
     summary: Mapped[str | None] = mapped_column(Text)
     latest_user_message: Mapped[str | None] = mapped_column(Text)
+    is_pinned: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    pinned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

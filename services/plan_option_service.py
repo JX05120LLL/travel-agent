@@ -35,6 +35,7 @@ from domain.plan_option.splitters import (
 )
 from services.errors import ServiceNotFoundError
 from services.memory_service import MemoryService
+from services.structured_travel_service import StructuredTravelService
 from services.session_management_service import SessionManagementService
 
 
@@ -108,6 +109,7 @@ class PlanOptionService:
         total_days: int | None = None,
         summary: str | None = None,
         plan_markdown: str | None = None,
+        constraints: dict | None = None,
         activate: bool = True,
         commit: bool = True,
     ) -> PlanOptionBranchView:
@@ -122,6 +124,7 @@ class PlanOptionService:
             total_days=total_days,
             summary=summary,
             plan_markdown=plan_markdown,
+            constraints=constraints,
             activate=activate,
         )
         self.memory_service.refresh_session_memory(session=session, commit=False)
@@ -154,6 +157,7 @@ class PlanOptionService:
         candidate_blocks = extract_candidate_plan_blocks_with_city_fallback(
             latest_assistant.content
         )
+        structured_context = self._build_structured_context_from_message(latest_assistant)
         if not candidate_blocks:
             candidate_blocks = [
                 {
@@ -179,6 +183,7 @@ class PlanOptionService:
                 primary_destination=block["primary_destination"],
                 summary=block["summary"],
                 plan_markdown=block["plan_markdown"],
+                constraints=self._build_plan_constraints(structured_context),
                 activate=index == 0,
             )
             created_items.append(plan_option)
@@ -194,6 +199,79 @@ class PlanOptionService:
             plan_options=created_items,
         )
         return [self.build_branch_view(item) for item in created_items]
+
+    def sync_option_from_latest_message(
+        self,
+        *,
+        session_id: uuid.UUID,
+        plan_option_id: uuid.UUID,
+        user_id: uuid.UUID,
+        activate: bool = True,
+        commit: bool = True,
+    ) -> PlanOptionBranchView:
+        session = self.get_session_or_raise(session_id=session_id, user_id=user_id)
+        plan_option = self.get_plan_option_or_raise(
+            session=session,
+            plan_option_id=plan_option_id,
+            user_id=user_id,
+        )
+        latest_assistant = get_latest_assistant_message(self.db, session_id=session.id)
+        if latest_assistant is None:
+            raise ValueError("当前会话还没有可同步的助手回复。")
+
+        candidate_blocks = extract_candidate_plan_blocks_with_city_fallback(
+            latest_assistant.content
+        )
+        primary_block = (
+            candidate_blocks[0]
+            if candidate_blocks
+            else {
+                "title": None,
+                "summary": build_plan_summary(latest_assistant.content),
+                "plan_markdown": latest_assistant.content,
+                "primary_destination": guess_primary_destination(
+                    latest_assistant.content
+                ),
+            }
+        )
+        structured_context = self._build_structured_context_from_message(latest_assistant)
+
+        self._apply_message_block_to_option(
+            plan_option=plan_option,
+            block=primary_block,
+            structured_context=structured_context,
+        )
+        session.updated_at = datetime.now()
+
+        if activate:
+            self._activate_plan_option(
+                session=session,
+                plan_option=plan_option,
+                refresh_memory=False,
+            )
+
+        create_session_event(
+            self.db,
+            session_id=session.id,
+            user_id=user_id,
+            plan_option_id=plan_option.id,
+            event_type="plan_option_synced_from_latest_message",
+            event_payload={
+                "title": plan_option.title,
+                "primary_destination": plan_option.primary_destination,
+                "source_message_id": (
+                    str(latest_assistant.id) if getattr(latest_assistant, "id", None) else None
+                ),
+            },
+        )
+
+        self.memory_service.refresh_session_memory(session=session, commit=False)
+        self._commit_and_refresh(
+            commit=commit,
+            session=session,
+            plan_options=[plan_option],
+        )
+        return self.build_branch_view(plan_option)
 
     def activate_option(
         self,
@@ -357,6 +435,7 @@ class PlanOptionService:
         total_days: int | None = None,
         summary: str | None = None,
         plan_markdown: str | None = None,
+        constraints: dict | None = None,
         activate: bool = True,
     ) -> PlanOption:
         current_count = count_session_plan_options(self.db, session_id=session.id)
@@ -388,6 +467,7 @@ class PlanOptionService:
                 total_days=total_days,
                 summary=resolved_summary or None,
                 plan_markdown=resolved_markdown,
+                constraints=dict(constraints or {}),
                 is_selected=activate,
             ),
         )
@@ -426,6 +506,60 @@ class PlanOptionService:
             )
 
         return plan_option
+
+    @staticmethod
+    def _build_plan_constraints(
+        structured_context: dict[str, object] | None,
+    ) -> dict[str, object] | None:
+        if not structured_context:
+            return None
+        return {
+            "structured_context": dict(structured_context),
+        }
+
+    @staticmethod
+    def _build_structured_context_from_message(message) -> dict[str, object] | None:
+        return StructuredTravelService.build_from_message(message)
+
+    def _apply_message_block_to_option(
+        self,
+        *,
+        plan_option: PlanOption,
+        block: dict[str, str | None],
+        structured_context: dict[str, object] | None,
+    ) -> None:
+        title = (block.get("title") or "").strip()
+        primary_destination = (
+            (block.get("primary_destination") or "").strip()
+            or plan_option.primary_destination
+            or guess_primary_destination(plan_option.title, plan_option.plan_markdown)
+        )
+        plan_markdown = (block.get("plan_markdown") or "").strip() or plan_option.plan_markdown
+        summary = (block.get("summary") or "").strip() or build_plan_summary(
+            plan_markdown or plan_option.title
+        )
+
+        if title:
+            plan_option.title = title[:200]
+        if primary_destination:
+            plan_option.primary_destination = primary_destination
+        plan_option.summary = summary or None
+        plan_option.plan_markdown = plan_markdown
+
+        merged_constraints = dict(plan_option.constraints or {})
+        if structured_context:
+            merged_constraints["structured_context"] = dict(structured_context)
+        plan_option.constraints = merged_constraints
+
+        destination_names = extract_mentioned_destinations(
+            plan_option.primary_destination,
+            plan_option.title,
+            plan_option.plan_markdown,
+        )
+        self._ensure_plan_option_destinations(
+            plan_option=plan_option,
+            destination_names=destination_names,
+        )
 
     def _copy_plan_option(
         self,

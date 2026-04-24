@@ -31,7 +31,7 @@ from langgraph.graph import StateGraph, START, END
 from langgraph.prebuilt import ToolNode, tools_condition
 
 from agent.state import AgentState
-from agent.prompts import SYSTEM_PROMPT
+from agent.prompts import build_system_prompt
 from tools.holiday_calendar import resolve_holiday_dates
 from tools.amap import (
     amap_city_route_plan,
@@ -46,6 +46,8 @@ from tools.weather import get_weather
 from tools.search import search_travel_info
 from tools.rag_retriever import retrieve_local_knowledge
 from tools.feishu_sender import send_to_feishu
+from tools.hotel import search_hotel_stays
+from tools.train_12306 import plan_12306_arrival, query_train_tickets_free_api
 from tools.wechat_sender import send_to_wechat_work
 
 load_dotenv()
@@ -65,9 +67,12 @@ tools = [
     amap_search_poi,
     amap_search_nearby_food,
     amap_search_stays,
+    search_hotel_stays,
     amap_route_plan,
     amap_city_route_plan,
     amap_plan_spot_routes,
+    plan_12306_arrival,
+    query_train_tickets_free_api,
     get_weather,
     search_travel_info,
     retrieve_local_knowledge,
@@ -90,7 +95,7 @@ def llm_node(state: AgentState):
     """
     from datetime import date
     today = date.today().strftime("%Y年%m月%d日")
-    system_with_date = SYSTEM_PROMPT + f"\n\n当前日期：{today}"
+    system_with_date = build_system_prompt(today)
     messages = [SystemMessage(content=system_with_date)] + state["messages"]
     response = llm_with_tools.invoke(messages)
     # 返回字典，LangGraph 会把 messages 追加到 State 里

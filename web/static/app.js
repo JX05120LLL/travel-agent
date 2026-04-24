@@ -1,5 +1,9 @@
-const { chatEndpoint, sessionsEndpoint, planOptionsPath } = window.TRAVEL_AGENT_CONFIG;
+﻿const { chatEndpoint, sessionsEndpoint, planOptionsPath } = window.TRAVEL_AGENT_CONFIG;
 const SESSION_STORAGE_KEY = "travel_agent_session_id";
+const markdownRenderer = window.TravelAgentMarkdown.createRenderer({
+  markedLib: window.marked,
+  domPurify: window.DOMPurify,
+});
 
 const chatScroll = document.getElementById("chatScroll");
 const messageList = document.getElementById("messageList");
@@ -10,6 +14,8 @@ const sendBtn = document.getElementById("sendBtn");
 const clearBtn = document.getElementById("clearBtn");
 const newSessionBtn = document.getElementById("newSessionBtn");
 const refreshSessionsBtn = document.getElementById("refreshSessionsBtn");
+const exportMarkdownBtn = document.getElementById("exportMarkdownBtn");
+const exportPdfBtn = document.getElementById("exportPdfBtn");
 const sessionList = document.getElementById("sessionList");
 const sessionEmpty = document.getElementById("sessionEmpty");
 const activeSessionTitle = document.getElementById("activeSessionTitle");
@@ -19,7 +25,6 @@ const createTripBtn = document.getElementById("createTripBtn");
 const createCheckpointBtn = document.getElementById("createCheckpointBtn");
 const rewindCheckpointBtn = document.getElementById("rewindCheckpointBtn");
 const renameSessionBtn = document.getElementById("renameSessionBtn");
-const archiveSessionBtn = document.getElementById("archiveSessionBtn");
 const deleteSessionBtn = document.getElementById("deleteSessionBtn");
 const planOptionList = document.getElementById("planOptionList");
 const planOptionEmpty = document.getElementById("planOptionEmpty");
@@ -42,6 +47,10 @@ const recallEmpty = document.getElementById("recallEmpty");
 const promptChips = document.querySelectorAll(".prompt-chip");
 const workspaceDrawerToggle = document.querySelector(".workspace-drawer-toggle");
 const headerActionMenu = document.querySelector("[data-header-menu]");
+const workspaceShell = document.getElementById("workspaceShell");
+const sessionPanel = document.getElementById("sessionPanel");
+const sidebarResizeHandle = document.getElementById("sidebarResizeHandle");
+const sidebarCollapseBtn = document.getElementById("sidebarCollapseBtn");
 
 const conversation = [];
 let currentSessionId = localStorage.getItem(SESSION_STORAGE_KEY) || "";
@@ -55,48 +64,19 @@ let recallItems = [];
 let checkpointItems = [];
 let memorySnapshot = null;
 let selectedComparisonPlanIds = new Set();
-
-marked.setOptions({
-  gfm: true,
-  breaks: true
-});
-
+const SIDEBAR_WIDTH_STORAGE_KEY = "travel_agent_sidebar_width";
+const SIDEBAR_COLLAPSED_STORAGE_KEY = "travel_agent_sidebar_collapsed";
+const SIDEBAR_MIN_WIDTH = 260;
+const SIDEBAR_MAX_WIDTH = 420;
+const SIDEBAR_DEFAULT_WIDTH = 296;
+const SIDEBAR_COLLAPSED_WIDTH = 88;
+const SIDEBAR_PEEK_OPEN_DELAY = 36;
+const SIDEBAR_PEEK_CLOSE_DELAY = 140;
+let sidebarPeekOpenTimer = null;
+let sidebarPeekCloseTimer = null;
 
 function normalizeMarkdown(rawText) {
-  // 在真正渲染前，先把模型常见的“不规范 Markdown”修正一下，
-  // 这样像标题、分隔线、列表这些结构更容易被解析出来。
-  let text = String(rawText || "");
-
-  // 修正标题写法：###**标题** -> ### **标题**
-  text = text.replace(/^(#{1,6})(\*\*|\S)/gm, (match, hashes, nextPart) => {
-    if (nextPart.startsWith(" ")) {
-      return match;
-    }
-    return `${hashes} ${nextPart}`;
-  });
-
-  // 修正标题强调写法：## **天气情况** -> ## 天气情况
-  text = text.replace(/^(#{1,6})\s+\*\*(.*?)\*\*\s*$/gm, "$1 $2");
-
-  // 修正分隔线写法：-- 或 —— 这种不标准写法统一转成 ---
-  text = text.replace(/^\s*(--|——|—{2,})\s*$/gm, "---");
-
-  // 修正列表写法：-**内容** -> - **内容**
-  text = text.replace(/^(\s*[-*])(\*\*|\S)/gm, (match, bullet, nextPart) => {
-    if (nextPart.startsWith(" ")) {
-      return match;
-    }
-    return `${bullet} ${nextPart}`;
-  });
-
-  // 修正有序列表写法：1.**内容** -> 1. **内容**
-  text = text.replace(/^(\s*\d+\.)((?!\s).)/gm, "$1 $2");
-
-  // 清理孤立的强调标记，避免页面上残留 **、## 这类符号
-  text = text.replace(/^\s*(\*\*|__)\s*$/gm, "");
-  text = text.replace(/\n{3,}/g, "\n\n");
-
-  return text;
+  return markdownRenderer.normalizeMarkdown(rawText);
 }
 
 
@@ -116,6 +96,23 @@ function stripMarkdownForPreview(rawText) {
   return text.trim();
 }
 
+function formatStayPriceSource(priceSource) {
+  const value = (priceSource || "").trim().toLowerCase();
+  if (!value) {
+    return "";
+  }
+  if (value === "lowest_price" || value === "最低价") {
+    return "价格来源：最低价";
+  }
+  if (value === "cost" || value === "人均价") {
+    return "价格来源：人均价";
+  }
+  if (value === "高德未返回价格" || value === "unknown") {
+    return "价格来源：高德未返回价格";
+  }
+  return "价格来源：" + priceSource;
+}
+
 
 function escapeHtml(value) {
   return String(value)
@@ -129,6 +126,212 @@ function escapeHtml(value) {
 function autoResizeTextarea() {
   messageInput.style.height = "auto";
   messageInput.style.height = `${Math.min(messageInput.scrollHeight, 180)}px`;
+}
+
+
+function clampSidebarWidth(value) {
+  return Math.max(SIDEBAR_MIN_WIDTH, Math.min(SIDEBAR_MAX_WIDTH, value));
+}
+
+
+function applySidebarWidth(width, { persist = true } = {}) {
+  if (!workspaceShell) {
+    return;
+  }
+  const nextWidth = clampSidebarWidth(Math.round(width || SIDEBAR_DEFAULT_WIDTH));
+  workspaceShell.style.setProperty("--sidebar-width", `${nextWidth}px`);
+  if (persist) {
+    localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(nextWidth));
+  }
+}
+
+
+function clearSidebarPeekTimers() {
+  if (sidebarPeekOpenTimer) {
+    window.clearTimeout(sidebarPeekOpenTimer);
+    sidebarPeekOpenTimer = null;
+  }
+  if (sidebarPeekCloseTimer) {
+    window.clearTimeout(sidebarPeekCloseTimer);
+    sidebarPeekCloseTimer = null;
+  }
+}
+
+
+function setSidebarPeek(active) {
+  if (!workspaceShell || !sessionPanel) {
+    return;
+  }
+  const canPeek = workspaceShell.classList.contains("is-sidebar-collapsed")
+    && !window.matchMedia("(max-width: 960px)").matches;
+  const nextActive = Boolean(active) && canPeek;
+  workspaceShell.classList.toggle("is-sidebar-peek", nextActive);
+  sessionPanel.classList.toggle("is-peeking", nextActive);
+}
+
+
+function scheduleSidebarPeek(active, delay = active ? SIDEBAR_PEEK_OPEN_DELAY : SIDEBAR_PEEK_CLOSE_DELAY) {
+  clearSidebarPeekTimers();
+  const timer = window.setTimeout(() => {
+    setSidebarPeek(active);
+    if (active) {
+      sidebarPeekOpenTimer = null;
+    } else {
+      sidebarPeekCloseTimer = null;
+    }
+  }, Math.max(0, delay));
+  if (active) {
+    sidebarPeekOpenTimer = timer;
+  } else {
+    sidebarPeekCloseTimer = timer;
+  }
+}
+
+
+function setSidebarCollapsed(collapsed, { persist = true } = {}) {
+  if (!workspaceShell || !sessionPanel) {
+    return;
+  }
+  clearSidebarPeekTimers();
+  if (!collapsed) {
+    setSidebarPeek(false);
+  }
+  workspaceShell.classList.toggle("is-sidebar-collapsed", Boolean(collapsed));
+  sessionPanel.classList.toggle("is-collapsed", Boolean(collapsed));
+  if (sidebarCollapseBtn) {
+    sidebarCollapseBtn.setAttribute("aria-label", collapsed ? "展开侧边栏" : "收起侧边栏");
+    sidebarCollapseBtn.setAttribute("title", collapsed ? "展开侧边栏" : "收起侧边栏");
+  }
+  if (newSessionBtn) {
+    newSessionBtn.textContent = collapsed ? "+" : "新对话";
+    newSessionBtn.setAttribute("title", "新对话");
+  }
+  if (refreshSessionsBtn) {
+    refreshSessionsBtn.textContent = collapsed ? "↻" : "刷新";
+    refreshSessionsBtn.setAttribute("title", "刷新");
+  }
+  if (collapsed) {
+    workspaceShell.style.setProperty("--sidebar-width", `${SIDEBAR_COLLAPSED_WIDTH}px`);
+  } else {
+    const storedWidth = Number(localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY));
+    applySidebarWidth(Number.isFinite(storedWidth) ? storedWidth : SIDEBAR_DEFAULT_WIDTH, {
+      persist: false,
+    });
+  }
+  if (persist) {
+    localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, collapsed ? "1" : "0");
+  }
+}
+
+
+function syncSidebarWidthFromViewport() {
+  if (!workspaceShell) {
+    return;
+  }
+  if (window.matchMedia("(max-width: 960px)").matches) {
+    clearSidebarPeekTimers();
+    setSidebarPeek(false);
+    workspaceShell.style.removeProperty("--sidebar-width");
+    workspaceShell.classList.remove("is-sidebar-collapsed");
+    sessionPanel?.classList.remove("is-collapsed");
+    return;
+  }
+  const isCollapsed = localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === "1";
+  if (isCollapsed) {
+    setSidebarCollapsed(true, { persist: false });
+    return;
+  }
+  const storedWidth = Number(localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY));
+  applySidebarWidth(Number.isFinite(storedWidth) ? storedWidth : SIDEBAR_DEFAULT_WIDTH, {
+    persist: false,
+  });
+}
+
+
+function initSidebarResize() {
+  if (!workspaceShell || !sessionPanel || !sidebarResizeHandle) {
+    return;
+  }
+
+  let isResizing = false;
+  let startX = 0;
+  let startWidth = SIDEBAR_DEFAULT_WIDTH;
+
+  const stopResize = () => {
+    if (!isResizing) {
+      return;
+    }
+    isResizing = false;
+    document.body.classList.remove("is-resizing-sidebar");
+    window.removeEventListener("pointermove", onPointerMove);
+    window.removeEventListener("pointerup", stopResize);
+  };
+
+  const onPointerMove = (event) => {
+    if (!isResizing) {
+      return;
+    }
+    const delta = event.clientX - startX;
+    applySidebarWidth(startWidth + delta);
+  };
+
+  sidebarResizeHandle.addEventListener("pointerdown", (event) => {
+    if (window.matchMedia("(max-width: 960px)").matches) {
+      return;
+    }
+    if (workspaceShell.classList.contains("is-sidebar-collapsed")) {
+      setSidebarCollapsed(false);
+    }
+    isResizing = true;
+    startX = event.clientX;
+    startWidth = sessionPanel.getBoundingClientRect().width;
+    document.body.classList.add("is-resizing-sidebar");
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", stopResize);
+    event.preventDefault();
+  });
+
+  sidebarResizeHandle.addEventListener("dblclick", () => {
+    applySidebarWidth(SIDEBAR_DEFAULT_WIDTH);
+  });
+
+  sidebarCollapseBtn?.addEventListener("click", () => {
+    const collapsed = workspaceShell.classList.contains("is-sidebar-collapsed");
+    setSidebarCollapsed(!collapsed);
+  });
+
+  sessionPanel.addEventListener("pointerenter", () => {
+    if (workspaceShell.classList.contains("is-sidebar-collapsed")) {
+      scheduleSidebarPeek(true);
+    }
+  });
+
+  sessionPanel.addEventListener("pointerleave", () => {
+    if (workspaceShell.classList.contains("is-sidebar-collapsed")) {
+      scheduleSidebarPeek(false);
+    }
+  });
+
+  sessionPanel.addEventListener("focusin", () => {
+    if (workspaceShell.classList.contains("is-sidebar-collapsed")) {
+      clearSidebarPeekTimers();
+      setSidebarPeek(true);
+    }
+  });
+
+  sessionPanel.addEventListener("focusout", () => {
+    if (!workspaceShell.classList.contains("is-sidebar-collapsed")) {
+      return;
+    }
+    window.setTimeout(() => {
+      if (!sessionPanel.contains(document.activeElement)) {
+        scheduleSidebarPeek(false, 60);
+      }
+    }, 0);
+  });
+
+  window.addEventListener("resize", syncSidebarWidthFromViewport);
+  syncSidebarWidthFromViewport();
 }
 
 
@@ -148,6 +351,16 @@ function closeWorkspaceDrawer() {
   if (workspaceDrawerToggle?.open) {
     workspaceDrawerToggle.removeAttribute("open");
   }
+}
+
+
+function closeOpenToolPanels(target = null) {
+  document.querySelectorAll(".tool-panel[open]").forEach((panel) => {
+    if (target && panel.contains(target)) {
+      return;
+    }
+    panel.removeAttribute("open");
+  });
 }
 
 
@@ -172,7 +385,7 @@ function createMessageRow(role, text = "") {
           <div class="plain-message">${escapeHtml(text)}</div>
         </div>
       </div>
-      <div class="message-avatar">你</div>
+      <div class="message-avatar">我</div>
     `;
     return { row };
   }
@@ -181,12 +394,15 @@ function createMessageRow(role, text = "") {
     <div class="message-avatar">TA</div>
     <div class="message-shell">
       <div class="message-head">
-        <div class="message-title">Travel Agent</div>
+        <div class="message-title">旅行助手</div>
         <div class="phase-badge" data-role="phase">准备中</div>
       </div>
       <div class="tool-stream" data-role="tool-stream">
         <details class="tool-panel">
-          <summary>工具执行记录</summary>
+          <summary>
+            <span class="tool-panel-summary-label">查看工具过程</span>
+            <span class="tool-panel-summary-meta" data-role="tool-meta">0 条记录</span>
+          </summary>
           <div class="tool-log" data-role="tool-log"></div>
         </details>
       </div>
@@ -203,12 +419,14 @@ function createMessageRow(role, text = "") {
     phase: row.querySelector('[data-role="phase"]'),
     toolStream: row.querySelector('[data-role="tool-stream"]'),
     toolLog: row.querySelector('[data-role="tool-log"]'),
+    toolMeta: row.querySelector('[data-role="tool-meta"]'),
     placeholder: row.querySelector('[data-role="placeholder"]'),
     streaming: row.querySelector('[data-role="streaming"]'),
     body: row.querySelector('[data-role="body"]'),
     rawContent: "",
     streamScheduled: false,
     phaseState: "planning",
+    workspacePayload: null,
   };
 }
 
@@ -228,9 +446,10 @@ function appendAssistantMessage() {
 }
 
 
-function appendHistoryAssistantMessage(text) {
+function appendHistoryAssistantMessage(text, metadata = {}) {
   const message = appendAssistantMessage();
   message.rawContent = text || "";
+  message.workspacePayload = metadata?.workspace_sync || null;
   setPhaseState(message, "done");
   updatePhase(message, "已完成");
   finalizeAssistantMessage(message);
@@ -266,7 +485,7 @@ function getSessionPreview(item) {
   const cleanPreview = stripMarkdownForPreview(preview);
   return cleanPreview
     ? cleanPreview.slice(0, 42)
-    : "还没有消息，点击后可以继续完善这次旅行规划。";
+    : "还没有消息，点开后可以继续完善这次旅行规划。";
 }
 
 
@@ -280,71 +499,82 @@ function renderSessionList() {
 
   sessionEmpty.classList.add("hidden");
 
-  sessionItems.forEach((item) => {
-    const shell = document.createElement("article");
-    shell.className = "session-card-shell";
+  const pinnedItems = sessionItems.filter((item) => item?.is_pinned);
+  const regularItems = sessionItems.filter((item) => !item?.is_pinned);
+  const groups = [
+    { label: "置顶会话", items: pinnedItems },
+    { label: "历史会话", items: regularItems },
+  ].filter((group) => group.items.length > 0);
 
-    const isActive = item.id === currentSessionId;
-    shell.innerHTML = `
-      <button type="button" class="session-card ${isActive ? "is-active" : ""}" data-role="open">
-        <div class="session-card-title-row">
-          <div class="session-card-title">${escapeHtml(item.title || "新对话")}</div>
-        </div>
-        <div class="session-card-preview">${escapeHtml(getSessionPreview(item))}</div>
-        <div class="session-card-meta">
-          <span>${escapeHtml(formatSessionTime(item.last_message_at) || "刚刚创建")}</span>
-          <span class="session-card-status">${escapeHtml(item.status || "active")}</span>
-        </div>
-      </button>
-      <details class="session-card-menu">
-        <summary aria-label="会话操作"></summary>
-        <div class="session-card-menu-panel">
-          <button type="button" class="session-menu-btn" data-action="open">打开会话</button>
-          <button type="button" class="session-menu-btn" data-action="rename">重命名</button>
-          <button type="button" class="session-menu-btn" data-action="archive">归档</button>
-          <button type="button" class="session-menu-btn danger" data-action="delete">删除</button>
-        </div>
-      </details>
-    `;
+  groups.forEach((group) => {
+    const groupLabel = document.createElement("div");
+    groupLabel.className = "session-list-section-label";
+    groupLabel.textContent = group.label;
+    sessionList.appendChild(groupLabel);
 
-    const openButton = shell.querySelector('[data-role="open"]');
-    const menu = shell.querySelector(".session-card-menu");
+    group.items.forEach((item) => {
+      const shell = document.createElement("article");
+      shell.className = "session-card-shell";
 
-    openButton.addEventListener("click", async () => {
-      await switchSession(item.id, item.title || "新对话");
-    });
+      const isActive = item.id === currentSessionId;
+      shell.innerHTML = `
+        <button type="button" class="session-card ${isActive ? "is-active" : ""}" data-role="open">
+          <div class="session-card-title-row">
+            <div class="session-card-title">${escapeHtml(item.title || "新对话")}</div>
+            <span class="session-card-active-dot ${isActive ? "is-visible" : ""}" aria-hidden="true"></span>
+          </div>
+          <div class="session-card-meta">
+            ${item?.is_pinned ? '<span class="session-card-pin">已置顶</span>' : ""}
+            <span>${escapeHtml(formatSessionTime(item.last_message_at) || "刚刚创建")}</span>
+          </div>
+        </button>
+        <details class="session-card-menu">
+          <summary aria-label="会话操作"></summary>
+          <div class="session-card-menu-panel">
+            <button type="button" class="session-menu-btn" data-action="pin">${
+              item?.is_pinned ? "取消置顶" : "置顶"
+            }</button>
+            <button type="button" class="session-menu-btn" data-action="rename">重命名</button>
+            <button type="button" class="session-menu-btn danger" data-action="delete">删除</button>
+          </div>
+        </details>
+      `;
 
-    menu.addEventListener("toggle", () => {
-      if (menu.open) {
-        closeSessionCardMenus(menu);
-      }
-    });
+      const openButton = shell.querySelector('[data-role="open"]');
+      const menu = shell.querySelector(".session-card-menu");
 
-    shell.querySelectorAll(".session-menu-btn").forEach((menuButton) => {
-      menuButton.addEventListener("click", async (event) => {
-        event.stopPropagation();
-        menu.removeAttribute("open");
+      openButton.addEventListener("click", async () => {
+        await switchSession(item.id, item.title || "新对话");
+      });
 
-        const action = menuButton.dataset.action;
-        if (action === "open") {
-          await switchSession(item.id, item.title || "新对话");
-          return;
-        }
-        if (action === "rename") {
-          await renameSessionById(item.id);
-          return;
-        }
-        if (action === "archive") {
-          await archiveSessionById(item.id);
-          return;
-        }
-        if (action === "delete") {
-          await deleteSessionById(item.id);
+      menu.addEventListener("toggle", () => {
+        if (menu.open) {
+          closeSessionCardMenus(menu);
         }
       });
-    });
 
-    sessionList.appendChild(shell);
+      shell.querySelectorAll(".session-menu-btn").forEach((menuButton) => {
+        menuButton.addEventListener("click", async (event) => {
+          event.stopPropagation();
+          menu.removeAttribute("open");
+
+          const action = menuButton.dataset.action;
+          if (action === "pin") {
+            await toggleSessionPin(item.id, !item?.is_pinned);
+            return;
+          }
+          if (action === "rename") {
+            await renameSessionById(item.id);
+            return;
+          }
+          if (action === "delete") {
+            await deleteSessionById(item.id);
+          }
+        });
+      });
+
+      sessionList.appendChild(shell);
+    });
   });
 }
 
@@ -370,6 +600,63 @@ function getPlanOptionPreview(item) {
 }
 
 
+function getPrimaryComparisonItem() {
+  if (!Array.isArray(comparisonItems) || !comparisonItems.length) {
+    return null;
+  }
+  return comparisonItems.find((item) => item?.status === "active") || comparisonItems[0];
+}
+
+
+function getRecommendedPlanOptionId() {
+  const comparison = getPrimaryComparisonItem();
+  if (comparison?.recommended_option_id) {
+    return comparison.recommended_option_id;
+  }
+  const active = planOptionItems.find((item) => item?.is_selected);
+  return active?.id || null;
+}
+
+
+function getTripSourcePlanOptionIds() {
+  return new Set(
+    (Array.isArray(tripItems) ? tripItems : [])
+      .map((item) => item?.source_plan_option_id)
+      .filter(Boolean)
+  );
+}
+
+
+function buildPlanOptionRole(item, recommendedPlanId, tripSourceIds) {
+  if (item?.id && recommendedPlanId && item.id === recommendedPlanId) {
+    return {
+      label: "推荐方案",
+      tone: "recommended",
+      note: "当前系统优先展示并持续同步这个方案。",
+    };
+  }
+  if (item?.is_selected) {
+    return {
+      label: "当前方案",
+      tone: "active",
+      note: "当前会话正在围绕这个方案继续细化。",
+    };
+  }
+  if (item?.id && tripSourceIds.has(item.id)) {
+    return {
+      label: "已入正式行程",
+      tone: "trip",
+      note: "该方案已经同步进正式行程。",
+    };
+  }
+  return {
+    label: "备选方案",
+    tone: "alternate",
+    note: "系统会继续保留它，用于后续自动比较与切换。",
+  };
+}
+
+
 function renderPlanOptions() {
   planOptionList.innerHTML = "";
   selectedComparisonPlanIds = new Set(
@@ -384,6 +671,8 @@ function renderPlanOptions() {
   }
 
   planOptionEmpty.classList.add("hidden");
+  const recommendedPlanId = getRecommendedPlanOptionId();
+  const tripSourceIds = getTripSourcePlanOptionIds();
 
   planOptionItems.forEach((item) => {
     const card = document.createElement("article");
@@ -391,23 +680,25 @@ function renderPlanOptions() {
     if (item.is_selected) {
       card.classList.add("is-active");
     }
+    const role = buildPlanOptionRole(item, recommendedPlanId, tripSourceIds);
+    card.classList.add(`plan-card-${role.tone}`);
 
     const destination = item.primary_destination || "目的地待补充";
-    const totalDays = item.total_days ? `${item.total_days} 天` : "天数待补充";
+    const totalDays = item.total_days ? String(item.total_days) + " 天" : "天数待补充";
     const updatedAt = formatSessionTime(item.updated_at) || "刚刚更新";
 
     const branchName = item.branch_name || item.title || "未命名分支";
     const branchDepth = Number.isFinite(item.branch_depth) ? item.branch_depth : 0;
     const versionNo = Number.isFinite(item.version_no) ? item.version_no : 1;
     const childCount = Number.isFinite(item.child_count) ? item.child_count : 0;
-    const branchHint = branchDepth > 0 ? `派生分支 ${branchDepth}` : "根分支";
+    const branchHint = branchDepth > 0 ? "派生分支 " + branchDepth : "根分支";
     const branchMeta = `${branchName} / ${branchHint} / v${versionNo}`;
-    const branchChildren = childCount > 0 ? `已派生 ${childCount} 个子分支` : "尚未派生子分支";
+    const branchChildren = childCount > 0 ? "已派生 " + childCount + " 个子分支" : "尚未派生子分支";
 
     card.innerHTML = `
       <div class="plan-card-head">
         <h3 class="plan-card-title">${escapeHtml(item.title || "未命名方案")}</h3>
-        <span class="plan-card-status">${escapeHtml(item.status || "draft")}</span>
+        <span class="plan-card-role plan-card-role-${escapeHtml(role.tone)}">${escapeHtml(role.label)}</span>
       </div>
       <div class="plan-card-branch">
         <span class="plan-branch-badge">${escapeHtml(branchMeta)}</span>
@@ -419,6 +710,8 @@ function renderPlanOptions() {
         <span>${escapeHtml(updatedAt)}</span>
       </div>
       <p class="plan-card-summary">${escapeHtml(getPlanOptionPreview(item))}</p>
+      <div class="plan-card-note">${escapeHtml(role.note)}</div>
+      ${renderStructuredCardStack(item, { title: "地图结果卡片", limit: 3 })}
       <div class="plan-card-actions">
         <button type="button" data-role="compare">${selectedComparisonPlanIds.has(item.id) ? "已加入比较" : "加入比较"}</button>
         <button type="button" data-role="copy">复制版本</button>
@@ -476,6 +769,9 @@ function renderPlanOptions() {
 
 
 function renderEmptyState(listElement, emptyElement, hasItems) {
+  if (!listElement || !emptyElement) {
+    return;
+  }
   listElement.innerHTML = "";
   emptyElement.classList.toggle("hidden", hasItems);
 }
@@ -486,9 +782,15 @@ function renderMemorySnapshot() {
   const activePlan = memorySnapshot?.active_plan_summary || "还没有激活方案。";
   const activeComparison = memorySnapshot?.active_comparison_summary || "当前没有活跃比较。";
 
-  sessionSummaryText.textContent = stripMarkdownForPreview(summary) || "当前还没有会话摘要。";
-  activePlanSummaryText.textContent = stripMarkdownForPreview(activePlan) || "还没有激活方案。";
-  comparisonSummaryText.textContent = stripMarkdownForPreview(activeComparison) || "当前没有活跃比较。";
+  if (sessionSummaryText) {
+    sessionSummaryText.textContent = stripMarkdownForPreview(summary) || "当前还没有会话摘要。";
+  }
+  if (activePlanSummaryText) {
+    activePlanSummaryText.textContent = stripMarkdownForPreview(activePlan) || "还没有激活方案。";
+  }
+  if (comparisonSummaryText) {
+    comparisonSummaryText.textContent = stripMarkdownForPreview(activeComparison) || "当前没有活跃比较。";
+  }
 }
 
 
@@ -536,14 +838,18 @@ function renderTrips() {
   }
 
   tripItems.forEach((item) => {
-    const node = document.createElement("article");
-    node.className = "mini-card";
-    node.innerHTML = `
-      <div class="mini-card-title">${escapeHtml(item.title || "未命名行程")}</div>
-      <div class="mini-card-copy">${escapeHtml(stripMarkdownForPreview(item.summary || "正式行程已创建。"))}</div>
-      <div class="mini-card-meta">${escapeHtml(item.primary_destination || "目的地待补充")} · ${escapeHtml(item.total_days ? `${item.total_days} 天` : "天数待补充")}</div>
-    `;
-    tripList.appendChild(node);
+    const hasItineraryDays = getTripItineraryDays(item).length > 0;
+    renderMiniCard(
+      tripList,
+      `
+        <div class="mini-card-title">${escapeHtml(item.title || "未命名行程")}</div>
+        <div class="mini-card-copy">${escapeHtml(stripMarkdownForPreview(item.summary || "正式行程已创建。"))}</div>
+        <div class="mini-card-meta">${escapeHtml(item.primary_destination || "目的地待补充")} 路 ${escapeHtml(item.total_days ? String(item.total_days) + " 天" : "天数待补充")}</div>
+        ${hasItineraryDays ? "" : renderStructuredCardStack(item, { title: "行程卡片", limit: 3 })}
+        ${renderTripItineraryMarkup(item)}
+      `,
+      "mini-card mini-card-trip"
+    );
   });
 }
 
@@ -558,7 +864,7 @@ function renderCheckpoints() {
     const node = document.createElement("article");
     node.className = "mini-card";
     node.innerHTML = `
-      <div class="mini-card-title">${escapeHtml(item.label || "未命名检查点")}</div>
+      <div class="mini-card-title">${escapeHtml(item.label || "鏈懡鍚嶆鏌ョ偣")}</div>
       <div class="mini-card-meta">${escapeHtml(formatSessionTime(item.created_at) || "")}</div>
     `;
     checkpointList.appendChild(node);
@@ -596,7 +902,7 @@ function renderRecalls() {
     node.className = "timeline-item";
     node.innerHTML = `
       <div class="timeline-title">${escapeHtml(item.recall_type || "none")}</div>
-      <div class="timeline-copy">${escapeHtml(stripMarkdownForPreview(item.summary || "暂无摘要"))}</div>
+      <div class="timeline-copy">${escapeHtml(stripMarkdownForPreview(item.summary || "鏆傛棤鎽樿"))}</div>
       <div class="timeline-time">${escapeHtml(formatSessionTime(item.created_at) || "")}</div>
     `;
     recallList.appendChild(node);
@@ -628,10 +934,10 @@ function formatConfidenceLabel(value) {
   const numeric = Number(value);
   if (Number.isFinite(numeric)) {
     const percent = numeric <= 1 ? Math.round(numeric * 100) : Math.round(numeric);
-    return `置信度 ${percent}%`;
+    return `缃俊搴?${percent}%`;
   }
 
-  return `置信度 ${String(value)}`;
+  return `缃俊搴?${String(value)}`;
 }
 
 
@@ -653,7 +959,7 @@ function formatCheckpointScopeSummary(scope) {
 
   const segments = [];
   if (scope.restores_plan_options) {
-    segments.push("恢复方案树");
+    segments.push("恢复方案集");
   }
   if (scope.restores_active_plan_pointer) {
     segments.push("恢复激活方案指针");
@@ -665,16 +971,16 @@ function formatCheckpointScopeSummary(scope) {
     segments.push("保留摘要种子");
   }
   if (scope.does_not_restore_messages) {
-    segments.push("消息流水不回滚");
+    segments.push("消息记录不回滚");
   }
   if (scope.does_not_restore_comparison_rows) {
-    segments.push("比较明细不回滚");
+    segments.push("比较记录不回滚");
   }
   if (scope.does_not_restore_trip_rows) {
     segments.push("正式行程不回滚");
   }
 
-  return segments.length ? segments.join(" · ") : "恢复当前工作区快照";
+  return segments.length ? segments.join(" 路 ") : "恢复当前工作区快照";
 }
 
 
@@ -683,6 +989,1069 @@ function renderMiniCard(container, html, className = "mini-card") {
   node.className = className;
   node.innerHTML = html;
   container.appendChild(node);
+}
+
+
+function getStructuredCards(item) {
+  if (!item?.structured_context || typeof item.structured_context !== "object") {
+    return [];
+  }
+
+  const cards = [];
+  const pushCards = (value) => {
+    if (!Array.isArray(value)) {
+      return;
+    }
+    value.forEach((card) => {
+      if (card && typeof card === "object") {
+        cards.push(card);
+      }
+    });
+  };
+
+  pushCards(item.structured_context.cards);
+  Object.values(item.structured_context).forEach((section) => {
+    if (section && typeof section === "object") {
+      pushCards(section.cards);
+    }
+  });
+
+  const deduped = new Map();
+  cards.forEach((card) => {
+    const key = [
+      card.provider || "",
+      card.type || "",
+      card.title || "",
+      card.summary || "",
+    ].join("|");
+    if (!deduped.has(key)) {
+      deduped.set(key, card);
+    }
+  });
+  return Array.from(deduped.values());
+}
+
+
+function formatStructuredCardType(type) {
+  const labels = {
+    route: "路线卡",
+    spot_route: "串联卡",
+    stay_recommendations: "住宿卡",
+    food_recommendations: "美食卡",
+    weather: "天气卡",
+    poi_list: "点位卡",
+    arrival_recommendation: "到达卡",
+    budget_summary: "预算卡",
+    travel_notes: "提醒卡",
+    planning_assumptions: "说明卡",
+  };
+  return labels[type] || "信息卡";
+}
+
+
+function getStructuredCardVariant(type) {
+  const variants = {
+    route: "route",
+    spot_route: "route",
+    stay_recommendations: "stay",
+    food_recommendations: "food",
+    weather: "weather",
+    poi_list: "poi",
+    arrival_recommendation: "route",
+    budget_summary: "budget",
+    travel_notes: "generic",
+    planning_assumptions: "generic",
+  };
+  return variants[type] || "generic";
+}
+
+
+function buildStructuredCardPresentation(card) {
+  const type = card?.type || "generic";
+  const data = card?.data && typeof card.data === "object" ? card.data : {};
+  const fallbackSummary = stripMarkdownForPreview(card?.summary || "");
+
+  if (type === "route") {
+    return {
+      title: card?.title || "路线规划",
+      summary:
+        fallbackSummary ||
+        [data.origin, data.destination].filter(Boolean).join(" -> ") ||
+        "已生成点到点路线规划。",
+      meta: [data.distance_text, data.duration_text, data.ticket_cost_text || data.taxi_cost_text]
+        .filter(Boolean)
+        .join(" 路 "),
+       tags: [data.mode, data.city, data.route_kind === "city_to_city" ? "跨城" : "点到点"],
+    };
+  }
+
+  if (type === "spot_route") {
+    return {
+      title: card?.title || "景点串联路线",
+      summary:
+        fallbackSummary ||
+        (Array.isArray(data.spot_sequence) && data.spot_sequence.length
+          ? data.spot_sequence.slice(0, 4).join(" -> ")
+          : "已生成景点串联路线。"),
+      meta: [data.total_distance_text, data.total_duration_text, data.note]
+        .filter(Boolean)
+        .join(" 路 "),
+      tags: [
+        data.city,
+        data.mode,
+        Array.isArray(data.spot_sequence) && data.spot_sequence.length
+          ? String(data.spot_sequence.length) + " 个点位"
+          : "",
+      ],
+    };
+  }
+
+  if (type === "stay_recommendations") {
+    const firstStay = Array.isArray(data.items) ? data.items[0] : null;
+    return {
+      title: card?.title || "住宿推荐",
+      summary:
+        fallbackSummary ||
+        data.filter_summary ||
+        (firstStay?.name ? "优先推荐 " + firstStay.name : "已生成住宿候选。"),
+      meta: [
+        firstStay?.name ? "优先项：" + firstStay.name : "",
+        firstStay?.distance_text || "",
+        firstStay?.budget_text || "",
+        formatStayPriceSource(firstStay?.price_source),
+      ]
+        .filter(Boolean)
+        .join(" 路 "),
+      tags: [
+        data.center,
+        Number.isFinite(data.filtered_count) ? String(data.filtered_count) + " 个候选" : "",
+        data.radius_text,
+      ],
+    };
+  }
+
+  if (type === "food_recommendations") {
+    const firstFood = Array.isArray(data.items) ? data.items[0] : null;
+    return {
+      title: card?.title || "周边美食",
+      summary:
+        fallbackSummary ||
+        (firstFood?.name ? "首推 " + firstFood.name : "已整理周边美食推荐。"),
+      meta: [firstFood?.distance_text || "", firstFood?.address || ""]
+        .filter(Boolean)
+        .join(" 路 "),
+      tags: [
+        data.center,
+        Number.isFinite(data.count) ? String(data.count) + " 个结果" : "",
+        data.radius_text,
+      ],
+    };
+  }
+
+  if (type === "weather") {
+    return {
+      title: card?.title || "天气信息",
+      summary: fallbackSummary || "已整理天气概览与出行建议。",
+      meta: [data.city, data.current_text, data.forecast_range].filter(Boolean).join(" 路 "),
+      tags: [data.city, data.extensions, Array.isArray(data.forecasts) ? String(data.forecasts.length) + " 天天气" : ""],
+    };
+  }
+
+  if (type === "poi_list") {
+    return {
+      title: card?.title || "点位候选",
+      summary:
+        fallbackSummary ||
+        [data.keywords, data.city].filter(Boolean).join(" 路 ") ||
+        "已整理地图点位候选。",
+      meta: [Number.isFinite(data.count) ? String(data.count) + " 个候选" : "", data.items?.[0]?.name || ""]
+        .filter(Boolean)
+        .join(" 路 "),
+      tags: [data.city, data.keywords],
+    };
+  }
+
+  if (type === "arrival_recommendation") {
+    return {
+      title: card?.title || "到达建议",
+      summary:
+        fallbackSummary ||
+        [
+          [data.origin_city, data.destination_city].filter(Boolean).join(" -> "),
+          data.recommended_mode,
+        ]
+          .filter(Boolean)
+          .join("，") ||
+        "已整理跨城到达建议。",
+      meta: [data.duration_text, data.price_text, data.booking_status].filter(Boolean).join(" 路 "),
+      tags: [data.depart_date, data.recommended_mode],
+    };
+  }
+
+  if (type === "budget_summary") {
+    return {
+      title: card?.title || "预算汇总",
+      summary:
+        fallbackSummary ||
+        data.summary ||
+        "已整理预算汇总。",
+      meta: Array.isArray(data.items) ? data.items.slice(0, 2).join(" 路 ") : "",
+      tags: [Array.isArray(data.items) ? String(data.items.length) + " 条预算说明" : ""],
+    };
+  }
+
+  return {
+    title: card?.title || "结构化信息",
+    summary: fallbackSummary || "已写入结构化结果。",
+    meta: "",
+    tags: [card?.provider || ""],
+  };
+}
+
+
+function renderStructuredCardMarkup(card) {
+  const type = card?.type || "generic";
+  const variant = getStructuredCardVariant(type);
+  const presentation = buildStructuredCardPresentation(card);
+
+  return `
+    <article class="structured-mini-card structured-mini-card-${variant}">
+      <div class="structured-mini-card-head">
+        <span class="structured-mini-card-kicker">${escapeHtml(card?.provider || "structured")}</span>
+        <span class="structured-mini-card-badge structured-mini-card-badge-${variant}">
+          ${escapeHtml(formatStructuredCardType(type))}
+        </span>
+      </div>
+      <div class="structured-mini-card-title">${escapeHtml(presentation.title)}</div>
+      <div class="structured-mini-card-copy">${escapeHtml(presentation.summary)}</div>
+      ${
+        presentation.meta
+          ? `<div class="structured-mini-card-meta">${escapeHtml(presentation.meta)}</div>`
+          : ""
+      }
+      ${buildMiniTags(presentation.tags || [])}
+    </article>
+  `;
+}
+
+
+function renderStructuredCardStack(item, options = {}) {
+  const cards = getStructuredCards(item);
+  if (!cards.length) {
+    return "";
+  }
+
+  const title = options.title || "结构化卡片";
+  const visibleCards = cards.slice(0, options.limit || 3);
+  const remainingCount = Math.max(cards.length - visibleCards.length, 0);
+
+  return `
+    <section class="structured-card-stack">
+      <div class="structured-card-stack-head">
+        <div class="structured-card-stack-title">${escapeHtml(title)}</div>
+        <div class="structured-card-stack-count">${escapeHtml(String(cards.length) + " 张")}</div>
+      </div>
+      <div class="structured-card-grid">
+        ${visibleCards.map((card) => renderStructuredCardMarkup(card)).join("")}
+      </div>
+      ${
+        remainingCount > 0
+          ? `<div class="structured-card-stack-more">${escapeHtml("还有 " + remainingCount + " 张卡片已写入结构化结果")}</div>`
+          : ""
+      }
+    </section>
+  `;
+}
+
+
+function buildTripDayDigest(day) {
+  if (!day || typeof day !== "object") {
+    return "";
+  }
+  const cleanSummary = stripMarkdownForPreview(day.summary || "");
+  if (cleanSummary) {
+    return cleanSummary;
+  }
+
+  const items = Array.isArray(day.items) ? day.items : [];
+  const spotSequence = items.find((item) => item?.type === "spot_sequence");
+  if (spotSequence && Array.isArray(spotSequence.spot_sequence) && spotSequence.spot_sequence.length) {
+    return spotSequence.spot_sequence.join(" -> ");
+  }
+
+  const transitItems = items.filter((item) => item?.type === "transit");
+  if (transitItems.length) {
+    return transitItems
+      .map((item) => [item?.from || "", item?.to || ""].filter(Boolean).join(" -> "))
+      .filter(Boolean)
+      .slice(0, 2)
+      .join(" / ");
+  }
+
+  const structuredCard = items.find((item) =>
+    ["route", "spot_route", "stay_recommendations", "food_recommendations"].includes(item?.type)
+  );
+  return stripMarkdownForPreview(structuredCard?.summary || "");
+}
+
+
+function renderTripDayDigestMarkup(day) {
+  const digest = buildTripDayDigest(day) || "系统已写入当日安排，等待进一步细化。";
+  return `
+    <article class="trip-day-digest-card">
+      <div class="trip-day-digest-kicker">第 ${escapeHtml(String(day?.day_no || ""))} 天</div>
+      <div class="trip-day-digest-title">${escapeHtml(day?.title || ("第 " + (day?.day_no || "") + " 天"))}</div>
+      <div class="trip-day-digest-copy">${escapeHtml(digest)}</div>
+      ${
+        day?.city_name
+          ? `<div class="trip-day-digest-meta">${escapeHtml(day.city_name)}</div>`
+          : ""
+      }
+    </article>
+  `;
+}
+
+
+function renderTripDigestGrid(item) {
+  const days = getTripItineraryDays(item);
+  if (!days.length) {
+    return "";
+  }
+
+  return `
+    <section class="trip-digest-grid-wrap">
+      <div class="trip-section-head">
+        <div class="trip-section-title">每日摘要</div>
+        <div class="trip-section-copy">${escapeHtml("已生成 " + days.length + " 天安排")}</div>
+      </div>
+      <div class="trip-digest-grid">
+        ${days.map((day) => renderTripDayDigestMarkup(day)).join("")}
+      </div>
+    </section>
+  `;
+}
+
+
+function renderStructuredShowcase(item) {
+  const cards = getStructuredCards(item);
+  if (!cards.length) {
+    return "";
+  }
+
+  const groups = [
+    {
+      title: "路线重点",
+      types: ["route", "spot_route", "poi_list"],
+    },
+    {
+      title: "住宿推荐",
+      types: ["stay_recommendations"],
+    },
+    {
+      title: "到达与预算",
+      types: ["arrival_recommendation", "budget_summary", "travel_notes", "planning_assumptions"],
+    },
+    {
+      title: "美食推荐",
+      types: ["food_recommendations"],
+    },
+  ];
+
+  const sections = groups
+    .map((group) => {
+      const matched = cards.filter((card) => group.types.includes(card?.type)).slice(0, 3);
+      if (!matched.length) {
+        return "";
+      }
+      return `
+        <section class="trip-showcase-section">
+          <div class="trip-section-head">
+            <div class="trip-section-title">${escapeHtml(group.title)}</div>
+            <div class="trip-section-copy">${escapeHtml(String(matched.length) + " 张卡片")}</div>
+          </div>
+          <div class="structured-card-grid">
+            ${matched.map((card) => renderStructuredCardMarkup(card)).join("")}
+          </div>
+        </section>
+      `;
+    })
+    .filter(Boolean)
+    .join("");
+
+  return sections ? `<section class="trip-showcase-stack">${sections}</section>` : "";
+}
+
+
+function renderWorkspaceSyncOverview(payload) {
+  const recommendedTitle = payload?.recommended_plan_title || "当前主方案";
+  const tripTitle = payload?.active_trip_title || "尚未生成正式行程";
+  const alternateTitles = Array.isArray(payload?.alternate_plan_titles)
+    ? payload.alternate_plan_titles.filter(Boolean)
+    : [];
+  const recommendationReasons = Array.isArray(payload?.recommendation_reasons)
+    ? payload.recommendation_reasons.filter(Boolean)
+    : [];
+  const tripState = payload?.active_trip_id ? "正式 Trip 已生成" : "当前仅同步主方案";
+  const syncState = payload?.auto_compared_options ? "系统已自动比较并推荐" : "当前按主方案继续输出";
+
+  return `
+    <section class="trip-decision-card">
+      <div class="trip-section-head">
+        <div class="trip-section-title">当前决策结果</div>
+        <div class="trip-section-copy">${escapeHtml(syncState)}</div>
+      </div>
+      <div class="trip-decision-grid">
+        <article class="trip-decision-block is-primary">
+          <div class="trip-decision-label">推荐方案</div>
+          <div class="trip-decision-value">${escapeHtml(recommendedTitle)}</div>
+        </article>
+        <article class="trip-decision-block">
+          <div class="trip-decision-label">正式行程状态</div>
+          <div class="trip-decision-value">${escapeHtml(tripState)}</div>
+        </article>
+        <article class="trip-decision-block">
+          <div class="trip-decision-label">正式 Trip</div>
+          <div class="trip-decision-value">${escapeHtml(tripTitle)}</div>
+        </article>
+        <article class="trip-decision-block">
+          <div class="trip-decision-label">备选方案</div>
+          <div class="trip-decision-value">${escapeHtml(alternateTitles.length ? alternateTitles.join(" / ") : "当前没有其他备选方案")}</div>
+        </article>
+      </div>
+      ${
+        recommendationReasons.length
+          ? `<div class="trip-decision-reason">
+              <div class="trip-decision-label">推荐理由</div>
+              <ul class="trip-decision-reason-list">${recommendationReasons.map((reason) => `<li>${escapeHtml(String(reason))}</li>`).join("")}</ul>
+            </div>`
+          : ""
+      }
+    </section>
+  `;
+}
+
+
+function renderTripHeroMarkup(item, payload) {
+  const documentPayload = item?.delivery_payload || {};
+  const arrival = documentPayload?.arrival || {};
+  const stay = documentPayload?.stay || {};
+  const budget = documentPayload?.budget || {};
+  const stayItems = Array.isArray(stay?.items) ? stay.items : [];
+  const primaryStay = stayItems.find((entry) => entry && typeof entry === "object") || null;
+  const destination = item?.primary_destination || "目的地待补充";
+  const totalDays = item?.total_days ? String(item.total_days) + " 天" : "天数待补充";
+  const tripState = payload?.active_trip_id ? "已同步正式行程" : "已同步当前主方案";
+  const comparisonState = payload?.auto_compared_options ? "已自动比较并推荐" : "当前还没有自动比较";
+  const recommendedState = payload?.recommended_plan_option_id ? "当前已有推荐方案" : "当前按激活方案输出";
+  const summary = stripMarkdownForPreview(
+    documentPayload?.overview?.summary || item?.summary || payload?.active_plan_summary || ""
+  );
+  const routeSummary = getTripHeroRouteSummary(item);
+  const heroInsights = [
+    budget?.summary
+      ? {
+          tone: "budget",
+          kicker: "预算摘要",
+          title: stripMarkdownForPreview(budget.summary),
+          meta: Array.isArray(budget?.items) ? budget.items.slice(0, 2).join(" · ") : "",
+        }
+      : null,
+    arrival?.summary || arrival?.recommended_mode
+      ? {
+          tone: "arrival",
+          kicker: "到达方式",
+          title: stripMarkdownForPreview(arrival.summary || arrival.recommended_mode || "已整理到达建议"),
+          meta: [arrival.duration_text, arrival.price_text, payload?.rail_ticket_status].filter(Boolean).join(" · "),
+        }
+      : null,
+    primaryStay
+      ? {
+          tone: "stay",
+          kicker: "住宿主结论",
+          title: stripMarkdownForPreview(primaryStay["name"] || primaryStay.name || "已生成住宿建议"),
+          meta: [
+            primaryStay["价格"] || primaryStay.price_text || "",
+            formatStayPriceSource(primaryStay["价格来源"] || primaryStay.price_source || ""),
+            primaryStay["片区"] || primaryStay.district || "",
+          ]
+            .filter(Boolean)
+            .join(" · "),
+        }
+      : null,
+  ].filter(Boolean);
+  const recommendationLead = Array.isArray(payload?.recommendation_reasons) && payload.recommendation_reasons.length
+    ? stripMarkdownForPreview(payload.recommendation_reasons[0] || "")
+    : "";
+  const heroBadges = [
+    payload?.active_trip_id ? "正式行程已生成" : "当前主方案",
+    item?.total_days ? `${item.total_days} 天安排` : "",
+    payload?.auto_compared_options ? "系统已自动比较" : "当前按激活方案推进",
+    payload?.trip_document_ready ? "成品行程单已生成" : "",
+  ].filter(Boolean);
+
+  return `
+    <section class="trip-hero-card">
+      <div class="trip-hero-cover">
+        <div class="trip-hero-main">
+          <div class="trip-hero-kicker">主方案封面</div>
+          <div class="trip-hero-title">${escapeHtml(item?.title || payload?.active_trip_title || "旅行方案")}</div>
+          ${
+            summary
+              ? `<div class="trip-hero-copy">${escapeHtml(summary)}</div>`
+              : ""
+          }
+          ${
+            recommendationLead
+              ? `<div class="trip-hero-note">${escapeHtml("推荐重点：" + recommendationLead)}</div>`
+              : ""
+          }
+          ${
+            heroBadges.length
+              ? `<div class="trip-hero-badges">${heroBadges.map((badge) => `<span class="trip-hero-badge">${escapeHtml(badge)}</span>`).join("")}</div>`
+              : ""
+          }
+          ${
+            routeSummary
+              ? `<div class="trip-hero-route"><span>路线提要</span><strong>${escapeHtml(routeSummary)}</strong></div>`
+              : ""
+          }
+        </div>
+        <div class="trip-hero-facts">
+          <div class="trip-hero-fact">
+            <div class="trip-hero-fact-label">目的地</div>
+            <div class="trip-hero-fact-value">${escapeHtml(destination)}</div>
+          </div>
+          <div class="trip-hero-fact">
+            <div class="trip-hero-fact-label">行程天数</div>
+            <div class="trip-hero-fact-value">${escapeHtml(totalDays)}</div>
+          </div>
+          <div class="trip-hero-fact">
+            <div class="trip-hero-fact-label">方案状态</div>
+            <div class="trip-hero-fact-value">${escapeHtml(tripState)}</div>
+          </div>
+          <div class="trip-hero-fact">
+            <div class="trip-hero-fact-label">推荐决策</div>
+            <div class="trip-hero-fact-value">${escapeHtml(payload?.auto_compared_options ? comparisonState : recommendedState)}</div>
+          </div>
+        </div>
+      </div>
+      ${
+        heroInsights.length
+          ? `<div class="trip-hero-insights">${
+              heroInsights.map((insight) => `
+                <article class="trip-hero-insight trip-hero-insight-${escapeHtml(insight.tone || "generic")}">
+                  <div class="trip-hero-insight-kicker">${escapeHtml(insight.kicker || "重点")}</div>
+                  <div class="trip-hero-insight-title">${escapeHtml(insight.title || "已整理主结论")}</div>
+                  ${
+                    insight.meta
+                      ? `<div class="trip-hero-insight-meta">${escapeHtml(insight.meta)}</div>`
+                      : ""
+                  }
+                </article>
+              `).join("")
+            }</div>`
+          : ""
+      }
+    </section>
+  `;
+}
+
+
+function renderTripDecisionMarkup(payload) {
+  const recommendedPlanId = payload?.recommended_plan_option_id || payload?.active_plan_option_id || getRecommendedPlanOptionId();
+  const recommendedPlan = planOptionItems.find((item) => item?.id === recommendedPlanId) || null;
+  const alternateTitles = Array.isArray(payload?.alternate_plan_titles)
+    ? payload.alternate_plan_titles.filter(Boolean)
+    : planOptionItems
+        .filter((item) => item?.id && item.id !== recommendedPlanId)
+        .slice(0, 3)
+        .map((item) => item.title || "未命名方案");
+  const recommendationReasons = Array.isArray(payload?.recommendation_reasons)
+    ? payload.recommendation_reasons.filter(Boolean)
+    : [];
+  const fallbackReasonText = stripMarkdownForPreview(
+    payload?.active_comparison_summary ||
+    payload?.active_plan_summary ||
+    "系统已结合当前候选方案和会话上下文，保留当前推荐作为主方案。"
+  );
+  const officialNotice = payload?.official_booking_notice;
+
+  return `
+    <section class="trip-decision-card">
+      <div class="trip-section-head">
+        <div class="trip-section-title">推荐决策</div>
+        <div class="trip-section-copy">${escapeHtml(payload?.auto_compared_options ? "系统已自动比较候选方案" : "当前按激活方案继续输出")}</div>
+      </div>
+      <div class="trip-decision-grid">
+        <article class="trip-decision-block is-primary">
+          <div class="trip-decision-label">推荐方案</div>
+          <div class="trip-decision-value">${escapeHtml(
+            payload?.recommended_plan_title || recommendedPlan?.title || payload?.active_trip_title || "当前推荐方案"
+          )}</div>
+        </article>
+        <article class="trip-decision-block">
+          <div class="trip-decision-label">备选方案</div>
+          <div class="trip-decision-value">${escapeHtml(
+            alternateTitles.length
+              ? alternateTitles.join(" / ")
+              : "当前没有其他备选方案"
+          )}</div>
+        </article>
+      </div>
+      <div class="trip-decision-reason">
+        <div class="trip-decision-label">推荐理由</div>
+        ${
+          recommendationReasons.length
+            ? `<ul class="trip-decision-reason-list">${recommendationReasons.map((reason) => `<li>${escapeHtml(String(reason))}</li>`).join("")}</ul>`
+            : `<div class="trip-decision-copy">${escapeHtml(fallbackReasonText)}</div>`
+        }
+      </div>
+      ${
+        officialNotice?.notice
+          ? `<div class="trip-decision-copy">${escapeHtml("官方提醒：" + officialNotice.notice)}</div>`
+          : ""
+      }
+    </section>
+  `;
+}
+
+
+function renderTripDocumentMarkup(item) {
+  const markdown = item?.document_markdown || "";
+  if (!markdown) {
+    return "";
+  }
+
+  return `
+    <section class="trip-itinerary-stack trip-itinerary-document">
+      <div class="trip-itinerary-stack-head">
+        <div class="trip-itinerary-stack-title">成品行程单</div>
+        <div class="trip-itinerary-stack-count">${escapeHtml("可直接发送/导出")}</div>
+      </div>
+      <div class="message-bubble">
+        <div class="markdown-body">${sanitizeMarkdown(markdown)}</div>
+      </div>
+    </section>
+  `;
+}
+
+
+function getTripItineraryDays(item) {
+  if (!Array.isArray(item?.itinerary_days)) {
+    return [];
+  }
+  return item.itinerary_days.filter((day) => day && typeof day === "object");
+}
+
+
+function getTripHeroRouteSummary(item) {
+  const daySummaries = getTripItineraryDays(item)
+    .map((day, index) => {
+      const sequenceItem = Array.isArray(day?.items)
+        ? day.items.find((entry) => entry?.type === "spot_sequence" && Array.isArray(entry?.spot_sequence) && entry.spot_sequence.length)
+        : null;
+      const rawSummary = sequenceItem?.spot_sequence?.filter(Boolean)?.join(" -> ")
+        || stripMarkdownForPreview(day?.summary || "");
+      if (!rawSummary) {
+        return "";
+      }
+      return `第 ${day?.day_no || index + 1} 天 ${rawSummary}`;
+    })
+    .filter(Boolean)
+    .slice(0, 3);
+
+  return daySummaries.join(" · ");
+}
+
+
+function buildTripHeroInsight(type, card) {
+  const data = card?.data && typeof card.data === "object" ? card.data : {};
+  if (type === "budget") {
+    const items = Array.isArray(data.items) ? data.items.filter(Boolean) : [];
+    return {
+      tone: "budget",
+      kicker: "预算概览",
+      title: stripMarkdownForPreview(data.summary || card?.summary || "") || "已整理预算信息",
+      meta: items.slice(0, 2).join(" · "),
+    };
+  }
+
+  if (type === "arrival") {
+    const summary = stripMarkdownForPreview(data.summary || card?.summary || "");
+    return {
+      tone: "arrival",
+      kicker: "到达方式",
+      title:
+        summary ||
+        [
+          [data.origin_city, data.destination_city].filter(Boolean).join(" -> "),
+          data.recommended_mode,
+        ]
+          .filter(Boolean)
+          .join("，") ||
+        "已整理跨城到达建议",
+      meta: [data.duration_text, data.price_text, data.booking_status].filter(Boolean).join(" · "),
+    };
+  }
+
+  const firstStay = Array.isArray(data.items) ? data.items.find((item) => item && typeof item === "object") : null;
+  return {
+    tone: "stay",
+    kicker: "住宿主结论",
+    title:
+      firstStay?.name
+        ? "优先考虑 " + firstStay.name
+        : (stripMarkdownForPreview(data.filter_summary || card?.summary || "") || "已生成住宿建议"),
+    meta: [
+      firstStay?.budget_text,
+      formatStayPriceSource(firstStay?.price_source),
+      firstStay?.distance_text,
+      firstStay?.address,
+    ]
+      .filter(Boolean)
+      .join(" · "),
+  };
+}
+
+
+function getTripHeroInsights(item) {
+  const cards = getStructuredCards(item);
+  if (!cards.length) {
+    return [];
+  }
+
+  const insights = [];
+  const budgetCard = cards.find((card) => card?.type === "budget_summary");
+  if (budgetCard) {
+    insights.push(buildTripHeroInsight("budget", budgetCard));
+  }
+
+  const arrivalCard = cards.find((card) => card?.type === "arrival_recommendation");
+  if (arrivalCard) {
+    insights.push(buildTripHeroInsight("arrival", arrivalCard));
+  }
+
+  const stayCard = cards.find((card) => card?.type === "stay_recommendations");
+  if (stayCard) {
+    insights.push(buildTripHeroInsight("stay", stayCard));
+  }
+
+  return insights.filter((item) => item && (item.title || item.meta));
+}
+
+
+function getTripTimelineItems(day) {
+  if (!Array.isArray(day?.items)) {
+    return [];
+  }
+  return day.items.filter((item) => {
+    if (!item || typeof item !== "object") {
+      return false;
+    }
+    return item.type === "transit" || item.type === "spot_sequence";
+  });
+}
+
+
+function getTripStructuredDayCards(day) {
+  if (!Array.isArray(day?.items)) {
+    return [];
+  }
+  return day.items.filter((item) => {
+    if (!item || typeof item !== "object") {
+      return false;
+    }
+    return ["route", "spot_route", "stay_recommendations", "food_recommendations", "poi_list"].includes(
+      item.type
+    );
+  });
+}
+
+
+function getTripRenderableDayItems(day) {
+  if (!Array.isArray(day?.items)) {
+    return [];
+  }
+  return day.items.filter((item) => item && typeof item === "object");
+}
+
+
+function renderTripSpotSequenceItem(item) {
+  const spots = Array.isArray(item?.spot_sequence) ? item.spot_sequence.filter(Boolean) : [];
+  const originalSpots = Array.isArray(item?.original_spot_sequence)
+    ? item.original_spot_sequence.filter(Boolean)
+    : [];
+  if (!spots.length) {
+    return "";
+  }
+
+  return `
+    <article class="trip-itinerary-item trip-itinerary-item-sequence">
+      <div class="trip-itinerary-item-head">
+        <div class="trip-itinerary-item-title">景点顺序优化</div>
+        <div class="trip-itinerary-item-badge">景点顺序</div>
+      </div>
+      <div class="trip-sequence-flow">
+        ${spots.map((spot) => `<span class="trip-sequence-chip">${escapeHtml(String(spot))}</span>`).join("")}
+      </div>
+      ${
+        item?.optimization_note
+          ? `<div class="trip-itinerary-item-copy">${escapeHtml(String(item.optimization_note))}</div>`
+          : ""
+      }
+      ${
+        originalSpots.length
+          ? `<div class="trip-itinerary-item-meta">原始顺序：${escapeHtml(originalSpots.join(" -> "))}</div>`
+          : ""
+      }
+      ${
+        [item?.total_distance_text, item?.total_duration_text].filter(Boolean).length
+          ? `<div class="trip-itinerary-item-meta">${escapeHtml(
+              [item?.total_distance_text, item?.total_duration_text].filter(Boolean).join(" 路 ")
+            )}</div>`
+          : ""
+      }
+    </article>
+  `;
+}
+
+
+function renderTripTransitStep(step, index) {
+  const instruction = step?.instruction || ("第 " + (index + 1) + " 步");
+  const meta = [
+    step?.line || "",
+    step?.departure_stop && step?.arrival_stop
+      ? `${step.departure_stop} -> ${step.arrival_stop}`
+      : (step?.destination_name || ""),
+    step?.distance_text || "",
+    step?.duration_text || "",
+    step?.ticket_cost_text || "",
+  ].filter(Boolean);
+
+  return `
+    <li class="trip-transit-step">
+      <div class="trip-transit-step-index">${index + 1}</div>
+      <div class="trip-transit-step-body">
+        <div class="trip-transit-step-copy">${escapeHtml(String(instruction))}</div>
+        ${
+          meta.length
+            ? `<div class="trip-transit-step-meta">${escapeHtml(meta.join(" 路 "))}</div>`
+            : ""
+        }
+      </div>
+    </li>
+  `;
+}
+
+
+function renderTripTransitItem(item) {
+  const stepDetails = Array.isArray(item?.step_details)
+    ? item.step_details.filter((step) => step && typeof step === "object")
+    : [];
+  const steps = stepDetails.length
+    ? stepDetails
+    : (Array.isArray(item?.steps)
+        ? item.steps.filter(Boolean).map((instruction) => ({ instruction }))
+        : []);
+
+  const summaryMeta = [
+    item?.mode || "",
+    item?.distance_text || "",
+    item?.duration_text || "",
+    item?.ticket_cost_text || "",
+    item?.walking_distance_text || "",
+  ].filter(Boolean);
+
+  if (!steps.length) {
+    return `
+      <article class="trip-itinerary-item trip-itinerary-item-transit">
+        <div class="trip-itinerary-item-head">
+          <div class="trip-itinerary-item-title">${escapeHtml(
+            [item?.from || "起点", item?.to || "终点"].join(" -> ")
+          )}</div>
+          <div class="trip-itinerary-item-badge">交通</div>
+        </div>
+        ${
+          summaryMeta.length
+            ? `<div class="trip-itinerary-item-meta">${escapeHtml(summaryMeta.join(" 路 "))}</div>`
+            : ""
+        }
+        <div class="trip-itinerary-item-copy">这段交通已写入行程，但还没有逐步说明。</div>
+      </article>
+    `;
+  }
+
+  return `
+    <details class="trip-itinerary-item trip-itinerary-item-transit trip-itinerary-item-collapsible">
+      <summary class="trip-itinerary-summary">
+        <div class="trip-itinerary-summary-main">
+          <div class="trip-itinerary-item-head">
+            <div class="trip-itinerary-item-title">${escapeHtml(
+              [item?.from || "起点", item?.to || "终点"].join(" -> ")
+            )}</div>
+            <div class="trip-itinerary-item-badge">交通</div>
+          </div>
+          ${
+            summaryMeta.length
+              ? `<div class="trip-itinerary-item-meta">${escapeHtml(summaryMeta.join(" 路 "))}</div>`
+              : ""
+          }
+        </div>
+        <div class="trip-itinerary-summary-toggle">${escapeHtml("展开 " + steps.length + " 步")}</div>
+      </summary>
+      <div class="trip-itinerary-detail">
+        <ol class="trip-transit-step-list">${steps.map((step, index) => renderTripTransitStep(step, index)).join("")}</ol>
+      </div>
+    </details>
+  `;
+}
+
+
+function renderTripTimelineItem(item) {
+  if (item?.type === "spot_sequence") {
+    return renderTripSpotSequenceItem(item);
+  }
+  if (item?.type === "transit") {
+    return renderTripTransitItem(item);
+  }
+  return "";
+}
+
+function formatTripPeriodLabel(period) {
+  const labels = {
+    morning: "上午",
+    afternoon: "下午",
+    evening: "晚上",
+  };
+  return labels[period] || "未分段";
+}
+
+
+function renderTripPeriodItem(item) {
+  if (item?.type === "spot_sequence" || item?.type === "transit") {
+    return renderTripTimelineItem(item);
+  }
+  return renderStructuredCardMarkup(item);
+}
+
+
+function renderTripDayPeriodGroup(period, items) {
+  const visibleItems = Array.isArray(items) ? items.filter(Boolean) : [];
+  if (!visibleItems.length) {
+    return "";
+  }
+
+  return `
+    <section class="trip-day-period">
+      <div class="trip-day-period-head">
+        <div class="trip-day-period-title">${escapeHtml(formatTripPeriodLabel(period))}</div>
+        <div class="trip-day-period-count">${escapeHtml(String(visibleItems.length) + " 项")}</div>
+      </div>
+      <div class="trip-day-period-grid">
+        ${visibleItems.map((item) => renderTripPeriodItem(item)).join("")}
+      </div>
+    </section>
+  `;
+}
+
+
+function renderTripDayMarkup(day) {
+  const renderableItems = getTripRenderableDayItems(day);
+  const periodOrder = ["morning", "afternoon", "evening"];
+  const groupedItems = {
+    morning: [],
+    afternoon: [],
+    evening: [],
+  };
+  renderableItems.forEach((item) => {
+    const period = periodOrder.includes(item?.time_period) ? item.time_period : "afternoon";
+    groupedItems[period].push(item);
+  });
+  const periodMarkup = periodOrder
+    .map((period) => renderTripDayPeriodGroup(period, groupedItems[period]))
+    .filter(Boolean)
+    .join("");
+  return `
+    <section class="trip-day-card">
+      <div class="trip-day-head">
+        <div>
+          <div class="trip-day-kicker">第 ${escapeHtml(String(day?.day_no || ""))} 天</div>
+          <div class="trip-day-title">${escapeHtml(day?.title || ("第 " + (day?.day_no || "") + " 天"))}</div>
+        </div>
+        <div class="trip-day-city">${escapeHtml(day?.city_name || "目的地待补充")}</div>
+      </div>
+      ${
+        day?.summary
+          ? `<div class="trip-day-summary">${escapeHtml(String(day.summary))}</div>`
+          : ""
+      }
+      ${
+        periodMarkup
+          ? `<div class="trip-day-period-list">${periodMarkup}</div>`
+          : ""
+      }
+      ${
+        !periodMarkup
+          ? `<div class="trip-day-empty">这一天还没有可展开的行程卡片。</div>`
+          : ""
+      }
+    </section>
+  `;
+}
+
+
+function renderTripItineraryMarkup(item) {
+  const days = getTripItineraryDays(item);
+  if (!days.length) {
+    return "";
+  }
+
+  return `
+    <section class="trip-itinerary-stack">
+      <div class="trip-itinerary-stack-head">
+        <div class="trip-itinerary-stack-title">每日行程时间线</div>
+        <div class="trip-itinerary-stack-count">${escapeHtml(String(days.length) + " 天")}</div>
+      </div>
+      <div class="trip-itinerary-day-list">
+        ${days.map((day) => renderTripDayMarkup(day)).join("")}
+      </div>
+    </section>
+  `;
+}
+
+
+async function hydrateAssistantWorkspace(message) {
+  return;
+}
+
+
+async function hydrateTripItems(items, sessionId) {
+  if (!sessionId || !Array.isArray(items) || !items.length) {
+    return Array.isArray(items) ? items : [];
+  }
+
+  const hydratedItems = await Promise.all(
+    items.map(async (item) => {
+      if (!item?.id) {
+        return item;
+      }
+      try {
+        const response = await fetch(`${sessionsEndpoint}/${sessionId}/trips/${item.id}`);
+        if (!response.ok) {
+          throw new Error(`???????????${response.status}`);
+        }
+        const payload = await response.json();
+        return {
+          ...item,
+          ...payload,
+        };
+      } catch (_error) {
+        return item;
+      }
+    })
+  );
+
+  return hydratedItems;
 }
 
 
@@ -698,9 +2067,9 @@ function renderPreferenceItems() {
     renderMiniCard(
       preferenceList,
       `
-        <div class="mini-card-title">偏好摘要注入</div>
+        <div class="mini-card-title">??????</div>
         <div class="mini-card-copy timeline-copy-strong">${escapeHtml(summaryText)}</div>
-        <div class="mini-card-meta">该摘要会随当前会话上下文一起注入，帮助模型延续用户偏好。</div>
+        <div class="mini-card-meta">??????????????????????????????</div>
       `,
       "mini-card mini-card-highlight"
     );
@@ -710,7 +2079,7 @@ function renderPreferenceItems() {
     const label = item.value?.label || item.value?.value || JSON.stringify(item.value || {});
     const meta = [formatPreferenceSource(item.source), formatConfidenceLabel(item.confidence)]
       .filter(Boolean)
-      .join(" · ");
+      .join(" 路 ");
     renderMiniCard(
       preferenceList,
       `
@@ -745,9 +2114,9 @@ function renderCheckpoints() {
         <div class="mini-card-title">${escapeHtml(item.label || "未命名检查点")}</div>
         <div class="mini-card-copy">${escapeHtml(formatCheckpointScopeSummary(item.snapshot_scope))}</div>
         ${buildMiniTags([
-          item.summary_restore_mode ? `摘要恢复：${item.summary_restore_mode}` : "",
-          item.active_plan_option_id ? "含激活方案指针" : "",
-          item.active_comparison_id ? "含比较指针" : "",
+          item.summary_restore_mode ? "摘要恢复：" + item.summary_restore_mode : "",
+          item.active_plan_option_id ? "包含激活方案指针" : "",
+          item.active_comparison_id ? "包含比较指针" : "",
         ])}
         <div class="mini-card-meta">${escapeHtml(formatSessionTime(item.created_at) || "")}</div>
       `
@@ -777,7 +2146,7 @@ function renderRecalls() {
         }
         ${buildMiniTags([
           item.matched_record_type ? `命中 ${item.matched_record_type}` : "",
-          item.matched_count ? `匹配 ${item.matched_count} 条` : "",
+          item.matched_count ? "匹配 " + item.matched_count + " 条" : "",
           formatConfidenceLabel(item.confidence),
         ])}
         <div class="timeline-time">${escapeHtml(formatSessionTime(item.created_at) || "")}</div>
@@ -805,10 +2174,15 @@ function setPhaseState(message, state) {
 
 function appendToolLog(message, content) {
   message.toolStream.classList.add("is-visible");
+  const nextCount = Number(message.toolLog.dataset.count || "0") + 1;
+  message.toolLog.dataset.count = String(nextCount);
+  if (message.toolMeta) {
+    message.toolMeta.textContent = `${nextCount} 条记录`;
+  }
   const entry = document.createElement("div");
   entry.className = "tool-entry";
   entry.innerHTML = `
-    <div class="tool-entry-label">Tool Output</div>
+    <div class="tool-entry-label">工具调用</div>
     <pre>${escapeHtml(content)}</pre>
   `;
   message.toolLog.appendChild(entry);
@@ -834,13 +2208,12 @@ function scheduleStreamingRender(message) {
 
 
 function renderFinalMarkdown(message) {
-  const normalized = normalizeMarkdown(message.rawContent || "");
-  const html = DOMPurify.sanitize(marked.parse(normalized));
-  message.body.innerHTML = html;
-  message.body.querySelectorAll("a").forEach((link) => {
-    link.setAttribute("target", "_blank");
-    link.setAttribute("rel", "noopener noreferrer");
-  });
+  markdownRenderer.renderIntoElement(message.body, message.rawContent || "");
+}
+
+
+function sanitizeMarkdown(markdown) {
+  return markdownRenderer.renderMarkdownHtml(markdown || "");
 }
 
 
@@ -938,7 +2311,7 @@ async function archiveSessionById(sessionId) {
   if (!sessionId) {
     return;
   }
-  if (!window.confirm("确认归档会话吗？归档后仍可在列表中查看。")) {
+  if (!window.confirm("确认归档这个会话吗？归档后仍可在列表中查看。")) {
     return;
   }
 
@@ -962,11 +2335,35 @@ async function archiveSessionById(sessionId) {
 }
 
 
+async function toggleSessionPin(sessionId, isPinned) {
+  if (!sessionId) {
+    return;
+  }
+
+  try {
+    const response = await fetch(`${sessionsEndpoint}/${sessionId}/pin`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ is_pinned: Boolean(isPinned) }),
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(payload.detail || `更新会话置顶失败：${response.status}`);
+    }
+    await loadSessions();
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
+
 async function deleteSessionById(sessionId) {
   if (!sessionId) {
     return;
   }
-  if (!window.confirm("确认删除会话吗？删除后无法恢复。")) {
+  if (!window.confirm("确认删除这个会话吗？删除后无法恢复。")) {
     return;
   }
 
@@ -1038,11 +2435,11 @@ async function rewindLatestCheckpoint() {
     return;
   }
   if (!checkpointItems.length) {
-    alert("当前会话还没有可回退的检查点。");
+    alert("当前没有可回退的检查点。");
     return;
   }
   const latest = checkpointItems[0];
-  if (!window.confirm(`确认回退到最近检查点“${latest.label}”吗？`)) {
+  if (!window.confirm('确认回退到最近检查点 "' + latest.label + '" 吗？')) {
     return;
   }
 
@@ -1114,20 +2511,24 @@ async function loadTrips() {
   if (!currentSessionId) {
     tripItems = [];
     renderTrips();
+    updateExportButtonsState();
     return;
   }
 
   try {
-    const response = await fetch(`${sessionsEndpoint}/${currentSessionId}/trips`);
+    const sessionId = currentSessionId;
+    const response = await fetch(`${sessionsEndpoint}/${sessionId}/trips`);
     if (!response.ok) {
       throw new Error(`加载正式行程失败：${response.status}`);
     }
     const payload = await response.json();
-    tripItems = Array.isArray(payload.items) ? payload.items : [];
+    const summaryItems = Array.isArray(payload.items) ? payload.items : [];
+    tripItems = await hydrateTripItems(summaryItems, sessionId);
   } catch (_error) {
     tripItems = [];
   }
   renderTrips();
+  updateExportButtonsState();
 }
 
 
@@ -1219,7 +2620,7 @@ async function refreshInsightPanels() {
 
 
 async function saveLatestReplyAsPlanOption() {
-  if (!currentSessionId) {
+  if (!currentSessionId || !savePlanBtn) {
     return;
   }
 
@@ -1327,13 +2728,13 @@ async function deletePlanOption(planOptionId) {
 
 
 async function compareSelectedPlans() {
-  if (!currentSessionId) {
+  if (!currentSessionId || !comparePlansBtn) {
     return;
   }
 
   const ids = Array.from(selectedComparisonPlanIds);
   if (ids.length < 2) {
-    alert("请先勾选至少两个候选方案再发起比较。");
+    alert("请至少选择两个候选方案再发起比较。");
     return;
   }
 
@@ -1364,7 +2765,7 @@ async function compareSelectedPlans() {
 
 
 async function createTrip(payload = {}) {
-  if (!currentSessionId) {
+  if (!currentSessionId || !createTripBtn) {
     return;
   }
 
@@ -1485,17 +2886,21 @@ async function streamReply(text) {
         setPhaseState(assistantMessage, phaseValue);
         updatePhase(assistantMessage, payload.label || "处理中");
       } else if (name === "intent") {
-        activeIntentBadge.textContent = payload.action || "待命";
+        if (activeIntentBadge) {
+          activeIntentBadge.textContent = payload.action || "待命";
+        }
       } else if (name === "session") {
         saveCurrentSessionId(payload.session_id || "");
         updateActiveSessionTitle(payload.title || "新对话");
       } else if (name === "tool") {
         setPhaseState(assistantMessage, "tooling");
-        updatePhase(assistantMessage, "正在调用旅行工具");
+        updatePhase(assistantMessage, "工具处理中");
         appendToolLog(assistantMessage, payload.content || "");
+      } else if (name === "workspace") {
+        assistantMessage.workspacePayload = payload || null;
       } else if (name === "token") {
         setPhaseState(assistantMessage, "answering");
-        updatePhase(assistantMessage, "正在整理最终建议");
+        updatePhase(assistantMessage, "正在整理最终方案");
         assistantMessage.rawContent += payload.content || "";
         scheduleStreamingRender(assistantMessage);
       } else if (name === "error") {
@@ -1585,7 +2990,9 @@ function clearConversation() {
   recallItems = [];
   memorySnapshot = null;
   selectedComparisonPlanIds.clear();
-  activeIntentBadge.textContent = "待命";
+  if (activeIntentBadge) {
+    activeIntentBadge.textContent = "待命";
+  }
   renderPlanOptions();
   renderMemorySnapshot();
   renderComparisons();
@@ -1593,6 +3000,7 @@ function clearConversation() {
   renderCheckpoints();
   renderEvents();
   renderRecalls();
+  updateExportButtonsState();
 }
 
 
@@ -1645,7 +3053,9 @@ function startNewSession() {
   recallItems = [];
   memorySnapshot = null;
   selectedComparisonPlanIds.clear();
-  activeIntentBadge.textContent = "待命";
+  if (activeIntentBadge) {
+    activeIntentBadge.textContent = "待命";
+  }
   renderPlanOptions();
   renderMemorySnapshot();
   renderComparisons();
@@ -1653,6 +3063,7 @@ function startNewSession() {
   renderCheckpoints();
   renderEvents();
   renderRecalls();
+  updateExportButtonsState();
   messageInput.focus();
 }
 
@@ -1665,7 +3076,7 @@ async function loadSessionHistory(sessionId = currentSessionId) {
   try {
     const response = await fetch(`${sessionsEndpoint}/${sessionId}/messages`);
     if (!response.ok) {
-      throw new Error(`加载会话失败：${response.status}`);
+      throw new Error(`加载会话消息失败：${response.status}`);
     }
 
     const payload = await response.json();
@@ -1684,17 +3095,85 @@ async function loadSessionHistory(sessionId = currentSessionId) {
         appendUserMessage(item.content || "");
         conversation.push({ role: "user", content: item.content || "" });
       } else if (item.role === "assistant") {
-        appendHistoryAssistantMessage(item.content || "");
+        appendHistoryAssistantMessage(item.content || "", item.metadata || {});
         conversation.push({ role: "assistant", content: item.content || "" });
       }
     });
+    updateExportButtonsState();
   } catch (_error) {
-    // 旧会话失效时直接清掉本地缓存，避免卡在坏状态。
+    // 旧会话失效时直接清空本地缓存，避免页面卡在坏状态。
     saveCurrentSessionId("");
     resetConversationView();
     updateActiveSessionTitle("新对话");
     await refreshInsightPanels();
+    updateExportButtonsState();
   }
+}
+
+
+function getCurrentExportTrip() {
+  if (!Array.isArray(tripItems) || !tripItems.length) {
+    return null;
+  }
+  return tripItems.find((item) => item?.status !== "archived") || tripItems[0] || null;
+}
+
+
+function updateExportButtonsState() {
+  const hasTrip = Boolean(currentSessionId && getCurrentExportTrip());
+  [exportMarkdownBtn, exportPdfBtn].forEach((button) => {
+    if (!button) {
+      return;
+    }
+    button.disabled = !hasTrip;
+  });
+}
+
+
+function extractDownloadFilename(disposition, fallbackName) {
+  const value = disposition || "";
+  const match = value.match(/filename=\"?([^\";]+)\"?/i);
+  return match?.[1] || fallbackName;
+}
+
+
+async function downloadTripExport(format) {
+  const trip = getCurrentExportTrip();
+  if (!currentSessionId || !trip?.id) {
+    return;
+  }
+
+  const response = await fetch(
+    `${sessionsEndpoint}/${currentSessionId}/trips/${trip.id}/export/${format}`
+  );
+  if (!response.ok) {
+    let message = `导出失败：${response.status}`;
+    try {
+      const payload = await response.json();
+      message = payload.detail || message;
+    } catch (_error) {
+      const text = await response.text();
+      if (text) {
+        message = text;
+      }
+    }
+    throw new Error(message);
+  }
+
+  const blob = await response.blob();
+  const fallbackName = format === "pdf" ? "trip-document.pdf" : "trip-document.md";
+  const filename = extractDownloadFilename(
+    response.headers.get("content-disposition"),
+    fallbackName,
+  );
+  const objectUrl = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = objectUrl;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(objectUrl);
 }
 
 
@@ -1717,6 +3196,14 @@ document.addEventListener("click", (event) => {
   if (!event.target.closest(".session-card-menu")) {
     closeSessionCardMenus();
   }
+  if (workspaceShell?.classList.contains("is-sidebar-collapsed")
+    && workspaceShell.classList.contains("is-sidebar-peek")
+    && sessionPanel
+    && !sessionPanel.contains(event.target)) {
+    clearSidebarPeekTimers();
+    setSidebarPeek(false);
+  }
+  closeOpenToolPanels(event.target);
 });
 
 
@@ -1725,6 +3212,9 @@ document.addEventListener("keydown", (event) => {
     closeHeaderActionMenu();
     closeWorkspaceDrawer();
     closeSessionCardMenus();
+    clearSidebarPeekTimers();
+    setSidebarPeek(false);
+    closeOpenToolPanels();
   }
 });
 
@@ -1751,28 +3241,50 @@ composerForm.addEventListener("submit", async (event) => {
 });
 
 
-clearBtn.addEventListener("click", clearConversation);
-newSessionBtn.addEventListener("click", startNewSession);
-refreshSessionsBtn.addEventListener("click", loadSessions);
-savePlanBtn.addEventListener("click", saveLatestReplyAsPlanOption);
-comparePlansBtn.addEventListener("click", compareSelectedPlans);
-createTripBtn.addEventListener("click", () => createTrip());
-createCheckpointBtn.addEventListener("click", createCheckpoint);
-rewindCheckpointBtn.addEventListener("click", rewindLatestCheckpoint);
-renameSessionBtn.addEventListener("click", renameCurrentSession);
-archiveSessionBtn.addEventListener("click", archiveCurrentSession);
-deleteSessionBtn.addEventListener("click", deleteCurrentSession);
+clearBtn?.addEventListener("click", clearConversation);
+newSessionBtn?.addEventListener("click", startNewSession);
+refreshSessionsBtn?.addEventListener("click", loadSessions);
+if (savePlanBtn) {
+  savePlanBtn.addEventListener("click", saveLatestReplyAsPlanOption);
+}
+if (comparePlansBtn) {
+  comparePlansBtn.addEventListener("click", compareSelectedPlans);
+}
+if (createTripBtn) {
+  createTripBtn.addEventListener("click", () => createTrip());
+}
+createCheckpointBtn?.addEventListener("click", createCheckpoint);
+rewindCheckpointBtn?.addEventListener("click", rewindLatestCheckpoint);
+renameSessionBtn?.addEventListener("click", renameCurrentSession);
+deleteSessionBtn?.addEventListener("click", deleteCurrentSession);
+exportMarkdownBtn?.addEventListener("click", async () => {
+  try {
+    await downloadTripExport("markdown");
+  } catch (error) {
+    window.alert(error.message || "导出 Markdown 失败");
+  }
+});
+exportPdfBtn?.addEventListener("click", async () => {
+  try {
+    await downloadTripExport("pdf");
+  } catch (error) {
+    window.alert(error.message || "导出 PDF 失败");
+  }
+});
 
 [
   clearBtn,
   createCheckpointBtn,
   rewindCheckpointBtn,
   renameSessionBtn,
-  archiveSessionBtn,
   deleteSessionBtn,
 ].forEach((button) => {
-  button.addEventListener("click", closeHeaderActionMenu);
+  button?.addEventListener("click", closeHeaderActionMenu);
 });
 
 autoResizeTextarea();
+updateExportButtonsState();
+initSidebarResize();
 loadSessions().then(() => Promise.all([loadSessionHistory(), loadPlanOptions(), refreshInsightPanels()]));
+
+

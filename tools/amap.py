@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+from itertools import permutations
 import re
 
 from langchain_core.tools import tool
@@ -60,6 +61,23 @@ def _format_budget(value: float | None) -> str:
     if value is None:
         return "未知"
     return f"{value:.0f} 元"
+
+
+def _resolve_stay_budget(item: dict) -> tuple[float | None, str]:
+    """住宿价格优先取最低价，其次使用人均。"""
+    lowest_price = item.get("lowest_price")
+    cost = item.get("cost")
+    try:
+        if lowest_price is not None:
+            return float(lowest_price), "最低价"
+    except (TypeError, ValueError):
+        pass
+    try:
+        if cost is not None:
+            return float(cost), "人均价"
+    except (TypeError, ValueError):
+        pass
+    return None, "高德未返回"
 
 
 def _safe_int(value: str | int | float | None, default: int = 10**9) -> int:
@@ -120,6 +138,203 @@ def _format_mode_label(mode: str) -> str:
         "transit": "公交/地铁",
     }
     return mapping.get(mode, mode)
+
+
+def _format_transit_step_type(step_type: str | None) -> str:
+    mapping = {
+        "walk": "步行",
+        "metro": "地铁",
+        "bus": "公交",
+        "railway": "铁路",
+        "other": "出行",
+    }
+    text = (step_type or "").strip().lower()
+    return mapping.get(text, step_type or "其他")
+
+
+def _format_cost_text(value: str | int | float | None) -> str | None:
+    if value in (None, "", []):
+        return None
+    try:
+        amount = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    if amount.is_integer():
+        return f"{int(amount)} 元"
+    return f"{amount:.1f} 元"
+
+
+def _extract_metric(primary: dict, field: str, *, default: int = 0) -> int:
+    value = primary.get(f"{field}_value")
+    if isinstance(value, (int, float)):
+        return int(value)
+    parsed = _safe_int(primary.get(field), default=default)
+    return max(parsed, 0) if parsed != default else default
+
+
+def _build_fallback_leg_steps(
+    *,
+    mode: str,
+    destination: str,
+    distance: str | None,
+    duration: str | None,
+) -> list[dict]:
+    if mode == "walking":
+        instruction = f"步行前往 {destination}"
+        step_type = "walk"
+    else:
+        instruction = f"驾车前往 {destination}"
+        step_type = "other"
+    return [
+        {
+            "type": step_type,
+            "instruction": instruction,
+            "distance": distance,
+            "duration": duration,
+        }
+    ]
+
+
+def _append_transit_step_lines(lines: list[str], steps: list[dict]) -> None:
+    for index, step in enumerate(steps, start=1):
+        instruction = step.get("instruction") or "前往下一段"
+        lines.append(f"{index}. {instruction}")
+        lines.append(f"   - 类型：{_format_transit_step_type(step.get('type'))}")
+        if step.get("line"):
+            lines.append(f"   - 线路：{step.get('line')}")
+        if step.get("departure_stop"):
+            lines.append(f"   - 上车站：{step.get('departure_stop')}")
+        if step.get("arrival_stop"):
+            lines.append(f"   - 下车站：{step.get('arrival_stop')}")
+        if step.get("via_num") not in (None, ""):
+            lines.append(f"   - 站数：{step.get('via_num')}")
+        if step.get("distance") not in (None, ""):
+            lines.append(f"   - 距离：{_format_distance(step.get('distance'))}")
+        if step.get("duration") not in (None, ""):
+            lines.append(f"   - 预计耗时：{_format_duration(step.get('duration'))}")
+        if step.get("ticket_cost_text"):
+            lines.append(f"   - 票价参考：{step.get('ticket_cost_text')}")
+        if step.get("destination_name"):
+            lines.append(f"   - 到达点：{step.get('destination_name')}")
+        if step.get("entrance"):
+            lines.append(f"   - 入口：{step.get('entrance')}")
+        if step.get("exit"):
+            lines.append(f"   - 出口：{step.get('exit')}")
+
+
+def _get_leg_route_result(
+    *,
+    service: AmapService,
+    origin: str,
+    destination: str,
+    city: str,
+    mode: str,
+    cache: dict[tuple[str, str, str, str], tuple[dict, dict]],
+) -> tuple[dict, dict]:
+    key = (origin, destination, mode, city)
+    cached = cache.get(key)
+    if cached is not None:
+        return cached
+
+    if mode == "walking":
+        result = service.route_walking(origin=origin, destination=destination)
+        primary = result.get("primary_path") or {}
+    elif mode == "driving":
+        result = service.route_driving(origin=origin, destination=destination)
+        primary = result.get("primary_path") or {}
+    else:
+        result = service.route_transit(
+            origin=origin,
+            destination=destination,
+            city=city,
+            cityd=city,
+        )
+        primary = result.get("primary_transit") or {}
+
+    cache[key] = (result, primary)
+    return result, primary
+
+
+def _optimize_spot_order(
+    *,
+    service: AmapService,
+    resolved_points: list[tuple[str, str, str]],
+    city: str,
+    mode: str,
+    cache: dict[tuple[str, str, str, str], tuple[dict, dict]],
+) -> tuple[list[tuple[str, str, str]], str | None]:
+    if len(resolved_points) <= 2:
+        return resolved_points, None
+
+    start_point = resolved_points[0]
+    remaining = resolved_points[1:]
+    original_order = list(resolved_points)
+
+    def plan_cost(sequence: tuple[tuple[str, str, str], ...]) -> tuple[int, int]:
+        duration_total = 0
+        distance_total = 0
+        ordered = (start_point, *sequence)
+        for index in range(len(ordered) - 1):
+            _, primary = _get_leg_route_result(
+                service=service,
+                origin=ordered[index][2],
+                destination=ordered[index + 1][2],
+                city=city,
+                mode=mode,
+                cache=cache,
+            )
+            duration_total += _extract_metric(primary, "duration", default=10**9)
+            distance_total += _extract_metric(primary, "distance", default=10**9)
+        return duration_total, distance_total
+
+    if len(resolved_points) <= 6:
+        best_sequence = min(
+            permutations(remaining),
+            key=plan_cost,
+        )
+        optimized = [start_point, *best_sequence]
+    else:
+        optimized = [start_point]
+        unvisited = list(remaining)
+        while unvisited:
+            current = optimized[-1]
+            next_point = min(
+                unvisited,
+                key=lambda point: (
+                    _extract_metric(
+                        _get_leg_route_result(
+                            service=service,
+                            origin=current[2],
+                            destination=point[2],
+                            city=city,
+                            mode=mode,
+                            cache=cache,
+                        )[1],
+                        "duration",
+                        default=10**9,
+                    ),
+                    _extract_metric(
+                        _get_leg_route_result(
+                            service=service,
+                            origin=current[2],
+                            destination=point[2],
+                            city=city,
+                            mode=mode,
+                            cache=cache,
+                        )[1],
+                        "distance",
+                        default=10**9,
+                    ),
+                ),
+            )
+            optimized.append(next_point)
+            unvisited.remove(next_point)
+
+    optimized_names = [item[0] for item in optimized]
+    original_names = [item[0] for item in original_order]
+    if optimized_names == original_names:
+        return optimized, "已评估，保持原顺序（固定首点）"
+    return optimized, f"已启用（固定首点：{start_point[0]}）"
 
 
 def _resolve_location(
@@ -291,11 +506,18 @@ def amap_route_plan(
         primary = result.get("primary_transit") or {}
         lines.append(f"城市：{transit_city}")
         lines.append(f"预计耗时：{_format_duration(primary.get('duration'))}")
+        if primary.get("distance") not in (None, ""):
+            lines.append(f"距离：{_format_distance(primary.get('distance'))}")
         lines.append(
             f"总步行距离：{_format_distance(primary.get('walking_distance'))}"
         )
-        if primary.get("cost"):
-            lines.append(f"票价参考：{primary.get('cost')} 元")
+        cost_text = primary.get("cost_text") or _format_cost_text(primary.get("cost"))
+        if cost_text:
+            lines.append(f"票价参考：{cost_text}")
+        steps = primary.get("steps") or []
+        if steps:
+            lines.extend(["", "### 逐步换乘"])
+            _append_transit_step_lines(lines, steps)
         return "\n".join(lines)
     except ServiceError as exc:
         return f"高德路线规划失败：{exc}"
@@ -388,9 +610,16 @@ def amap_city_route_plan(
         )
         primary = transit.get("primary_transit") or {}
         lines.append(f"预计耗时：{_format_duration(primary.get('duration'))}")
+        if primary.get("distance") not in (None, ""):
+            lines.append(f"距离：{_format_distance(primary.get('distance'))}")
         lines.append(f"总步行距离：{_format_distance(primary.get('walking_distance'))}")
-        if primary.get("cost"):
-            lines.append(f"票价参考：{primary.get('cost')} 元")
+        cost_text = primary.get("cost_text") or _format_cost_text(primary.get("cost"))
+        if cost_text:
+            lines.append(f"票价参考：{cost_text}")
+        steps = primary.get("steps") or []
+        if steps:
+            lines.extend(["", "### 逐步换乘"])
+            _append_transit_step_lines(lines, steps)
         return "\n".join(lines)
     except ServiceError as exc:
         return f"城市路线规划失败：{exc}"
@@ -522,14 +751,16 @@ def amap_search_stays(
             "### 推荐列表",
         ]
         for idx, item in enumerate(merged, start=1):
+            budget_value, budget_source = _resolve_stay_budget(item)
             lines.append(
                 f"{idx}. **{item.get('name')}**（{item.get('type') or '住宿'}）"
             )
             lines.append(
                 f"   距离：{_format_distance(item.get('distance'))}｜"
                 f"评分：{item.get('rating') if item.get('rating') is not None else '未知'}｜"
-                f"人均：{_format_budget(item.get('cost'))}"
+                f"人均：{_format_budget(budget_value)}"
             )
+            lines.append(f"   价格来源：{budget_source}")
             lines.append(
                 f"   地址：{item.get('address') or '未知'}｜电话：{item.get('tel') or '未知'}"
             )
@@ -548,7 +779,7 @@ def amap_plan_spot_routes(
     spots: str,
     mode: str = "driving",
 ) -> str:
-    """景点串联路线规划（按输入顺序依次连接）。
+    """景点串联路线规划（支持自动顺序优化）。
 
     参数：
     - city：城市名
@@ -570,40 +801,54 @@ def amap_plan_spot_routes(
             loc, display, _ = _resolve_location(spot, city_hint=city)
             resolved_points.append((spot, display, loc))
 
+        route_cache: dict[tuple[str, str, str, str], tuple[dict, dict]] = {}
+        optimized_points, optimization_note = _optimize_spot_order(
+            service=service,
+            resolved_points=resolved_points,
+            city=city,
+            mode=mode_normalized,
+            cache=route_cache,
+        )
+
         total_distance = 0
         total_duration = 0
+        detailed_leg_blocks: list[str] = []
         lines = [
             "## 景点串联路线",
             f"- 城市：{city}",
             f"- 出行方式：{_format_mode_label(mode_normalized)}",
-            f"- 景点顺序：{' -> '.join(spot_items)}",
-            "",
-            "### 分段明细",
-            "| 段落 | 起点 | 终点 | 距离 | 耗时 |",
-            "| --- | --- | --- | --- | --- |",
+            f"- 景点顺序：{' -> '.join(point[0] for point in optimized_points)}",
         ]
+        if len(optimized_points) > 2:
+            lines.extend(
+                [
+                    f"- 原始顺序：{' -> '.join(spot_items)}",
+                    f"- 自动顺序优化：{optimization_note or '未启用'}",
+                ]
+            )
+        lines.extend(
+            [
+                "",
+                "### 分段明细",
+                "| 段落 | 起点 | 终点 | 距离 | 耗时 |",
+                "| --- | --- | --- | --- | --- |",
+            ]
+        )
 
-        for index in range(len(resolved_points) - 1):
-            from_name, from_display, from_loc = resolved_points[index]
-            to_name, to_display, to_loc = resolved_points[index + 1]
+        for index in range(len(optimized_points) - 1):
+            _from_name, from_display, from_loc = optimized_points[index]
+            _to_name, to_display, to_loc = optimized_points[index + 1]
+            _, primary = _get_leg_route_result(
+                service=service,
+                origin=from_loc,
+                destination=to_loc,
+                city=city,
+                mode=mode_normalized,
+                cache=route_cache,
+            )
 
-            if mode_normalized == "walking":
-                result = service.route_walking(origin=from_loc, destination=to_loc)
-                primary = result.get("primary_path") or {}
-            elif mode_normalized == "driving":
-                result = service.route_driving(origin=from_loc, destination=to_loc)
-                primary = result.get("primary_path") or {}
-            else:
-                result = service.route_transit(
-                    origin=from_loc,
-                    destination=to_loc,
-                    city=city,
-                    cityd=city,
-                )
-                primary = result.get("primary_transit") or {}
-
-            distance = _safe_int(primary.get("distance"), default=0)
-            duration = _safe_int(primary.get("duration"), default=0)
+            distance = _extract_metric(primary, "distance")
+            duration = _extract_metric(primary, "duration")
             total_distance += max(distance, 0)
             total_duration += max(duration, 0)
 
@@ -613,8 +858,33 @@ def amap_plan_spot_routes(
                 f"{_format_duration(primary.get('duration'))} |"
             )
 
+            leg_cost_text = primary.get("cost_text") or _format_cost_text(primary.get("cost"))
+            leg_steps = primary.get("steps") or _build_fallback_leg_steps(
+                mode=mode_normalized,
+                destination=to_display,
+                distance=primary.get("distance"),
+                duration=primary.get("duration"),
+            )
+            leg_lines = [
+                "",
+                f"### 第 {index + 1} 段：{from_display} -> {to_display}",
+                f"- 出行方式：{_format_mode_label(mode_normalized)}",
+                f"- 距离：{_format_distance(primary.get('distance'))}",
+                f"- 耗时：{_format_duration(primary.get('duration'))}",
+            ]
+            if primary.get("walking_distance") not in (None, ""):
+                leg_lines.append(
+                    f"- 总步行距离：{_format_distance(primary.get('walking_distance'))}"
+                )
+            if leg_cost_text:
+                leg_lines.append(f"- 票价参考：{leg_cost_text}")
+            _append_transit_step_lines(leg_lines, leg_steps)
+            detailed_leg_blocks.extend(leg_lines)
+
         lines.extend(
             [
+                "",
+                *detailed_leg_blocks,
                 "",
                 "### 总体估算",
                 f"- 总距离：{_format_distance(str(total_distance))}",

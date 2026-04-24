@@ -28,7 +28,12 @@ def list_sessions(
         select(ChatSession)
         .where(ChatSession.user_id == user_id)
         .where(ChatSession.status != "deleted")
-        .order_by(ChatSession.last_message_at.desc(), ChatSession.created_at.desc())
+        .order_by(
+            ChatSession.is_pinned.desc(),
+            ChatSession.pinned_at.asc().nulls_last(),
+            ChatSession.last_message_at.desc(),
+            ChatSession.created_at.desc(),
+        )
         .limit(limit)
     )
     return list(db.execute(stmt).scalars())

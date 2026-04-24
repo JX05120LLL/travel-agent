@@ -203,6 +203,8 @@ def _build_comparison_summary(comparison: PlanComparison) -> str:
         f"比较名称：{comparison.name}",
         f"比较状态：{comparison.status}",
     ]
+    if comparison.recommended_option is not None:
+        lines.append(f"当前推荐：{comparison.recommended_option.title}")
     option_lines: list[str] = []
     for item in comparison_items:
         option = item.plan_option

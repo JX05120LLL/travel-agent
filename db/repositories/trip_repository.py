@@ -69,6 +69,44 @@ def get_trip(
     return db.execute(stmt).scalar_one_or_none()
 
 
+def get_latest_trip_for_plan_option(
+    db: Session,
+    *,
+    session_id: uuid.UUID,
+    plan_option_id: uuid.UUID,
+    user_id: uuid.UUID,
+) -> Trip | None:
+    """查询当前会话里某个候选方案最近一次沉淀出的正式行程。"""
+    stmt: Select[tuple[Trip]] = (
+        select(Trip)
+        .where(Trip.session_id == session_id)
+        .where(Trip.source_plan_option_id == plan_option_id)
+        .where(Trip.user_id == user_id)
+        .where(Trip.status != "archived")
+        .order_by(Trip.updated_at.desc(), Trip.created_at.desc())
+        .limit(1)
+    )
+    return db.execute(stmt).scalar_one_or_none()
+
+
+def get_latest_session_trip(
+    db: Session,
+    *,
+    session_id: uuid.UUID,
+    user_id: uuid.UUID,
+) -> Trip | None:
+    """查询当前会话最近一次生成的有效 Trip。"""
+    stmt: Select[tuple[Trip]] = (
+        select(Trip)
+        .where(Trip.session_id == session_id)
+        .where(Trip.user_id == user_id)
+        .where(Trip.status != "archived")
+        .order_by(Trip.updated_at.desc(), Trip.created_at.desc())
+        .limit(1)
+    )
+    return db.execute(stmt).scalar_one_or_none()
+
+
 def list_user_trips(
     db: Session,
     *,

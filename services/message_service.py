@@ -55,6 +55,7 @@ class MessageService:
         session: ChatSession,
         user_id: uuid.UUID,
         content: str,
+        commit: bool = True,
     ) -> Message:
         """保存用户消息并刷新会话活跃时间。"""
         _touch_session(session, latest_user_message=content)
@@ -89,9 +90,10 @@ class MessageService:
             },
         )
         self.memory_service.refresh_session_memory(session=session, commit=False)
-        self.db.commit()
-        self.db.refresh(message)
-        self.db.refresh(session)
+        if commit:
+            self.db.commit()
+            self.db.refresh(message)
+            self.db.refresh(session)
         return message
 
     def save_assistant_message(
@@ -102,6 +104,8 @@ class MessageService:
         content: str,
         tool_outputs: list[str] | None = None,
         has_error: bool = False,
+        extra_metadata: dict | None = None,
+        commit: bool = True,
     ) -> Message:
         """保存助手消息。"""
         _touch_session(session)
@@ -109,6 +113,8 @@ class MessageService:
             "tool_outputs": tool_outputs or [],
             "has_error": has_error,
         }
+        if isinstance(extra_metadata, dict):
+            metadata.update(extra_metadata)
         message = add_message(
             self.db,
             session_id=session.id,
@@ -133,7 +139,8 @@ class MessageService:
             },
         )
         self.memory_service.refresh_session_memory(session=session, commit=False)
-        self.db.commit()
-        self.db.refresh(message)
-        self.db.refresh(session)
+        if commit:
+            self.db.commit()
+            self.db.refresh(message)
+            self.db.refresh(session)
         return message

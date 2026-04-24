@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
@@ -13,25 +13,17 @@
 </head>
 <body>
   <main class="app-shell">
-    <section class="workspace-shell">
-      <aside class="session-panel">
+    <section class="workspace-shell" id="workspaceShell">
+      <aside class="session-panel" id="sessionPanel">
         <div class="session-panel-top">
           <div class="session-app-brand">
             <div class="session-app-badge">TA</div>
             <div>
-              <p class="session-panel-kicker">Travel Agent</p>
+              <p class="session-panel-kicker">旅行助手</p>
               <h2>会话</h2>
             </div>
           </div>
           <button type="button" class="session-create-btn" id="newSessionBtn">新对话</button>
-        </div>
-
-        <div class="session-panel-summary">
-          <div class="session-summary-card">
-            <span class="session-summary-label">Workspace</span>
-            <strong>旅行规划、方案演进与记忆沉淀，都在同一个会话里完成</strong>
-            <p>左侧管理历史会话，右侧专注聊天与当前方案。需要看检查点、召回和偏好时，再展开详情面板。</p>
-          </div>
         </div>
 
         <div class="session-list-wrap">
@@ -44,6 +36,22 @@
             还没有历史会话。点击“新对话”或直接发送一条消息，就会自动创建会话。
           </div>
         </div>
+        <button
+          type="button"
+          class="sidebar-resize-handle"
+          id="sidebarResizeHandle"
+          aria-label="调整侧边栏宽度"
+          title="拖动调整侧边栏宽度，双击恢复默认宽度"
+        ></button>
+        <button
+          type="button"
+          class="sidebar-collapse-btn"
+          id="sidebarCollapseBtn"
+          aria-label="收起侧边栏"
+          title="收起或展开侧边栏"
+        >
+          <span class="sidebar-collapse-icon" aria-hidden="true"></span>
+        </button>
       </aside>
 
       <section class="chat-panel">
@@ -52,129 +60,26 @@
             <div class="brand-block brand-block-compact">
               <div class="brand-mark">TA</div>
               <div class="header-copy">
-                <p class="header-kicker">Travel Workspace</p>
+                <p class="header-kicker">旅行规划</p>
                 <h1 id="activeSessionTitle">新对话</h1>
-                <p class="header-subtitle">围绕一个会话持续规划、分叉方案、沉淀记忆。</p>
-              </div>
-            </div>
-
-            <div class="session-state-strip">
-              <div class="state-pill">
-                <span class="state-pill-label">当前意图</span>
-                <span id="activeIntentBadge" class="insight-badge">待命</span>
-              </div>
-              <div class="state-pill state-pill-wide">
-                <span class="state-pill-label">会话摘要</span>
-                <span id="sessionSummaryText" class="state-pill-copy">当前还没有会话摘要。</span>
-              </div>
-              <div class="state-pill state-pill-wide">
-                <span class="state-pill-label">激活方案</span>
-                <span id="activePlanSummaryText" class="state-pill-copy">还没有激活方案。</span>
-              </div>
-              <div class="state-pill state-pill-wide">
-                <span class="state-pill-label">活跃比较</span>
-                <span id="comparisonSummaryText" class="state-pill-copy">当前没有活跃比较。</span>
+                <p class="header-subtitle">告诉我目的地和偏好，我们直接开始做行程。</p>
               </div>
             </div>
           </div>
 
           <div class="chat-header-actions chat-header-actions-compact">
-            <div class="primary-action-row">
-              <button type="button" class="plan-save-btn plan-save-btn-primary" id="savePlanBtn">保存为方案</button>
-              <button type="button" class="plan-save-btn" id="comparePlansBtn">比较方案</button>
-              <button type="button" class="plan-save-btn" id="createTripBtn">生成正式行程</button>
+            <div class="document-actions" aria-label="行程单导出">
+              <button type="button" class="ghost-button" id="exportMarkdownBtn">导出 Markdown</button>
+              <button type="button" class="ghost-button" id="exportPdfBtn">导出 PDF</button>
             </div>
 
             <div class="secondary-action-row">
-              <details class="workspace-drawer-toggle">
-                <summary class="header-action-trigger">会话详情</summary>
-                <div class="workspace-drawer">
-                  <section class="drawer-section">
-                    <div class="drawer-section-head">
-                      <p class="sidebar-section-kicker">Quick Prompts</p>
-                      <h3>快捷问法</h3>
-                    </div>
-                    <div class="prompt-strip">
-                      {% for prompt in suggestion_prompts %}
-                      <button type="button" class="prompt-chip" data-prompt="{{ prompt }}">{{ prompt }}</button>
-                      {% endfor %}
-                    </div>
-                  </section>
-
-                  <section class="drawer-section">
-                    <div class="drawer-section-head">
-                      <p class="sidebar-section-kicker">Plan Options</p>
-                      <h3>候选方案</h3>
-                    </div>
-                    <div class="plan-list" id="planOptionList"></div>
-                    <div class="plan-empty hidden" id="planOptionEmpty">当前还没有候选方案，先通过对话沉淀出第一版。</div>
-                  </section>
-
-                  <section class="drawer-grid">
-                    <article class="insight-card">
-                      <div class="insight-card-head">
-                        <h3>长期偏好</h3>
-                        <span class="insight-badge muted">Preference</span>
-                      </div>
-                      <div class="insight-list" id="preferenceList"></div>
-                      <div class="insight-empty" id="preferenceEmpty">当前还没有稳定偏好被沉淀出来。</div>
-                    </article>
-
-                    <article class="insight-card">
-                      <div class="insight-card-head">
-                        <h3>方案比较</h3>
-                        <span class="insight-badge muted">Comparison</span>
-                      </div>
-                      <div class="insight-list" id="comparisonList"></div>
-                      <div class="insight-empty" id="comparisonEmpty">当前会话还没有比较记录。</div>
-                    </article>
-
-                    <article class="insight-card">
-                      <div class="insight-card-head">
-                        <h3>正式行程</h3>
-                        <span class="insight-badge muted">Trip</span>
-                      </div>
-                      <div class="insight-list" id="tripList"></div>
-                      <div class="insight-empty" id="tripEmpty">当前还没有正式行程。</div>
-                    </article>
-
-                    <article class="insight-card">
-                      <div class="insight-card-head">
-                        <h3>检查点</h3>
-                        <span class="insight-badge muted">Checkpoint</span>
-                      </div>
-                      <div class="insight-list" id="checkpointList"></div>
-                      <div class="insight-empty" id="checkpointEmpty">当前会话还没有检查点。</div>
-                    </article>
-
-                    <article class="insight-card">
-                      <div class="insight-card-head">
-                        <h3>事件日志</h3>
-                        <span class="insight-badge muted">Events</span>
-                      </div>
-                      <div class="timeline-list" id="eventList"></div>
-                      <div class="insight-empty" id="eventEmpty">当前还没有事件日志。</div>
-                    </article>
-
-                    <article class="insight-card">
-                      <div class="insight-card-head">
-                        <h3>历史召回</h3>
-                        <span class="insight-badge muted">Recall</span>
-                      </div>
-                      <div class="timeline-list" id="recallList"></div>
-                      <div class="insight-empty" id="recallEmpty">当前还没有召回记录。</div>
-                    </article>
-                  </section>
-                </div>
-              </details>
-
               <details class="header-action-menu" data-header-menu>
-                <summary class="header-action-trigger">更多操作</summary>
+                <summary class="header-action-trigger" aria-label="更多操作" title="更多操作">
+                  <span class="header-action-trigger-icon" aria-hidden="true">...</span>
+                </summary>
                 <div class="header-action-panel">
-                  <button type="button" class="ghost-button" id="createCheckpointBtn">创建检查点</button>
-                  <button type="button" class="ghost-button" id="rewindCheckpointBtn">回退检查点</button>
                   <button type="button" class="ghost-button" id="renameSessionBtn">重命名会话</button>
-                  <button type="button" class="ghost-button" id="archiveSessionBtn">归档会话</button>
                   <button type="button" class="ghost-button danger" id="deleteSessionBtn">删除会话</button>
                   <button type="button" class="ghost-button" id="clearBtn">开始新对话</button>
                 </div>
@@ -186,19 +91,29 @@
         <div class="chat-stage chat-stage-dual">
           <div class="chat-scroll" id="chatScroll">
             <section class="welcome-card welcome-card-compact" id="welcomeCard">
-              <p class="welcome-label">开始对话</p>
-              <h2>先说清旅行目标，我们再把方案一轮轮聊稳。</h2>
-              <p class="welcome-text">
-                例如：“帮我做一个杭州两天周末行程，预算中等，想轻松一点，偏美食和散步，不想太赶。”
-              </p>
-              <div class="welcome-note">
-                <span class="welcome-note-title">建议一起说明：</span>
-                <span>出发地、天数、预算、出行月份、偏好节奏，以及是否需要酒店和交通建议。</span>
-              </div>
-              <div class="prompt-strip prompt-strip-welcome">
-                {% for prompt in suggestion_prompts %}
-                <button type="button" class="prompt-chip" data-prompt="{{ prompt }}">{{ prompt }}</button>
-                {% endfor %}
+              <div class="welcome-card-grid">
+                <div class="welcome-card-copy">
+                  <p class="welcome-label">开始对话</p>
+                  <h2>把旅行目标说清，我们直接开始规划。</h2>
+                  <p class="welcome-text">
+                    例如：“帮我做一个杭州两天周末行程，预算中等，想轻松一点，偏美食和散步，不想走太多路。”
+                  </p>
+                  <div class="welcome-note">
+                    <span class="welcome-note-title">建议一起说明：</span>
+                    <span>出发地、天数、预算、出行月份、偏好节奏，以及是否需要酒店和交通建议。</span>
+                  </div>
+                </div>
+
+                <div class="welcome-card-side">
+                  <div class="welcome-side-block">
+                    <span class="welcome-side-label">可以直接这样问</span>
+                    <div class="prompt-strip prompt-strip-welcome">
+                      {% for prompt in suggestion_prompts %}
+                      <button type="button" class="prompt-chip" data-prompt="{{ prompt }}">{{ prompt }}</button>
+                      {% endfor %}
+                    </div>
+                  </div>
+                </div>
               </div>
             </section>
 
@@ -206,21 +121,36 @@
           </div>
 
           <form class="composer composer-floating" id="composerForm">
-            <label class="composer-label" for="messageInput">输入你的旅行需求</label>
             <div class="composer-box">
               <textarea
                 id="messageInput"
                 rows="1"
-                placeholder="例如：帮我规划 3 天成都旅行，预算中等，想吃本地美食，也想去 1-2 个轻松景点。"
+                placeholder="输入目的地、天数和偏好，我会直接给你一条龙旅行方案"
               ></textarea>
               <button type="submit" id="sendBtn">发送</button>
             </div>
-            <p class="composer-tip">按 Enter 发送，Shift + Enter 换行。</p>
           </form>
         </div>
       </section>
     </section>
   </main>
+
+  <section class="workspace-data-sink" aria-hidden="true" hidden>
+    <div id="planOptionList"></div>
+    <div id="planOptionEmpty" class="hidden"></div>
+    <div id="preferenceList"></div>
+    <div id="preferenceEmpty" class="hidden"></div>
+    <div id="comparisonList"></div>
+    <div id="comparisonEmpty" class="hidden"></div>
+    <div id="tripList"></div>
+    <div id="tripEmpty" class="hidden"></div>
+    <div id="checkpointList"></div>
+    <div id="checkpointEmpty" class="hidden"></div>
+    <div id="eventList"></div>
+    <div id="eventEmpty" class="hidden"></div>
+    <div id="recallList"></div>
+    <div id="recallEmpty" class="hidden"></div>
+  </section>
 
   <script>
     window.TRAVEL_AGENT_CONFIG = {
@@ -229,6 +159,7 @@
       planOptionsPath: "/plan-options"
     };
   </script>
+  <script src="{{ request.url_for('static', path='markdown.js') }}"></script>
   <script src="{{ request.url_for('static', path='app.js') }}"></script>
 </body>
 </html>
