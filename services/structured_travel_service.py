@@ -14,6 +14,7 @@ import re
 from typing import Any
 
 from services.amap_service import AmapService
+from services.amap_mcp_service import extract_map_preview_payloads
 
 
 class StructuredTravelService:
@@ -60,6 +61,23 @@ class StructuredTravelService:
         structured_context: dict[str, Any] = {}
 
         amap_context = AmapService.extract_structured_context(tool_outputs)
+        map_previews = extract_map_preview_payloads(tool_outputs)
+        if map_previews:
+            amap_context = dict(amap_context or {})
+            amap_context["map_preview"] = map_previews[-1]
+            amap_context["map_previews"] = map_previews
+            cards = list(amap_context.get("cards") or [])
+            latest_preview = map_previews[-1]
+            cards.append(
+                cls._build_card(
+                    provider="amap",
+                    card_type="map_preview",
+                    title="高德地图预览",
+                    summary=latest_preview.get("title") or "已生成地图预览",
+                    data=latest_preview,
+                )
+            )
+            amap_context["cards"] = cards
         if amap_context:
             structured_context["amap"] = amap_context
 
@@ -166,6 +184,10 @@ class StructuredTravelService:
             "data_source": data.get("数据来源"),
             "fetched_at": data.get("数据时效"),
             "degraded_reason": data.get("降级原因"),
+            "provider_status": {
+                "selected_provider": data.get("命中来源") or data.get("数据来源"),
+                "fallback_errors": data.get("降级记录"),
+            },
             "summary": data.get("方案摘要"),
             "candidates": candidate_items,
             "official_notice": official_notice,

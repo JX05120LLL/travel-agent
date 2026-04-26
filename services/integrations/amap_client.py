@@ -35,6 +35,7 @@ class AmapClient:
         api_key = (
             os.getenv("AMAP_API_KEY", "").strip()
             or os.getenv("AMAP_MAPS_API_KEY", "").strip()
+            or os.getenv("AMAP_MCP_KEY", "").strip()
         )
         if not api_key:
             raise ServiceConfigError(

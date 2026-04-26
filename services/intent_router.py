@@ -8,14 +8,47 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 from dataclasses import dataclass, field
 
 from sqlalchemy.orm import Session
 
 from db.models import ChatSession, PlanOption
-from db.repositories.plan_option_repository import get_active_plan_option, list_plan_options
+from db.repositories.plan_option_repository import (
+    get_active_plan_option,
+    list_plan_options,
+)
 from domain.plan_option.splitters import extract_mentioned_destinations
+
+EXPLICIT_COMPARISON_PHRASES = (
+    "对比",
+    "比较一下",
+    "比较下",
+    "帮我比较",
+    "给我比较",
+    "做个比较",
+    "哪个好",
+    "哪个更好",
+    "哪个更适合",
+    "二选一",
+    "怎么选",
+    "选哪个好",
+    "PK",
+    "pk",
+)
+
+COMPARISON_SUBJECT_KEYWORDS = (
+    "方案",
+    "行程",
+    "路线",
+    "版本",
+    "目的地",
+    "城市",
+    "酒店",
+    "民宿",
+    "景点",
+)
 
 
 @dataclass(slots=True)
@@ -31,7 +64,7 @@ class SessionRouteResult:
     clarification_message: str | None = None
 
     def to_intent_payload(self) -> dict:
-        """给 Web/SSE 层用的轻量结果。"""
+        """给 Web/SSE 层使用的轻量结构。"""
         return {
             "action": self.action,
             "confidence": self.confidence,
@@ -107,7 +140,7 @@ class IntentRouter:
                 confidence=0.96,
             )
 
-        if any(keyword in text for keyword in ["比较", "对比", "哪个更好", "哪个更适合"]):
+        if self._looks_like_comparison_request(text):
             target_options = self._pick_options_for_comparison(
                 plan_options=plan_options,
                 text=text,
@@ -213,11 +246,39 @@ class IntentRouter:
         )
 
     @staticmethod
+    def _looks_like_comparison_request(text: str) -> bool:
+        """仅在用户明确要比较候选方案时触发比较路由。"""
+        normalized = (text or "").strip()
+        if not normalized:
+            return False
+
+        if any(phrase in normalized for phrase in EXPLICIT_COMPARISON_PHRASES):
+            return True
+
+        if "比较" not in normalized:
+            return False
+
+        if re.search(r"比较(有|像|偏|想|晚|早|近|远|高|低|轻松|方便|推荐|特色)", normalized):
+            return False
+
+        if any(
+            re.search(rf"比较.{{0,8}}{re.escape(keyword)}", normalized)
+            or re.search(rf"{re.escape(keyword)}.{{0,8}}比较", normalized)
+            for keyword in COMPARISON_SUBJECT_KEYWORDS
+        ):
+            return True
+
+        if re.search(r"(把|将).+(和|跟).+比较", normalized):
+            return True
+
+        return False
+
+    @staticmethod
     def _match_option_by_text(
         options: list[PlanOption],
         text: str,
     ) -> PlanOption | None:
-        """按标题/目的地/摘要做轻量文本匹配。"""
+        """按标题、目的地、摘要做轻量文本匹配。"""
         for option in options:
             haystacks = [
                 option.title or "",

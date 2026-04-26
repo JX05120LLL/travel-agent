@@ -45,6 +45,7 @@ htmlcov/
 # Docs and test files
 docs/
 test_*.py
+!tests/test_*.py
 
 # LangGraph / vector store artifacts
 *.faiss

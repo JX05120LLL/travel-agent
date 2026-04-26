@@ -11,11 +11,9 @@ const welcomeCard = document.getElementById("welcomeCard");
 const composerForm = document.getElementById("composerForm");
 const messageInput = document.getElementById("messageInput");
 const sendBtn = document.getElementById("sendBtn");
-const clearBtn = document.getElementById("clearBtn");
 const newSessionBtn = document.getElementById("newSessionBtn");
 const refreshSessionsBtn = document.getElementById("refreshSessionsBtn");
-const exportMarkdownBtn = document.getElementById("exportMarkdownBtn");
-const exportPdfBtn = document.getElementById("exportPdfBtn");
+const currentTripPanel = document.getElementById("currentTripPanel");
 const sessionList = document.getElementById("sessionList");
 const sessionEmpty = document.getElementById("sessionEmpty");
 const activeSessionTitle = document.getElementById("activeSessionTitle");
@@ -24,8 +22,6 @@ const comparePlansBtn = document.getElementById("comparePlansBtn");
 const createTripBtn = document.getElementById("createTripBtn");
 const createCheckpointBtn = document.getElementById("createCheckpointBtn");
 const rewindCheckpointBtn = document.getElementById("rewindCheckpointBtn");
-const renameSessionBtn = document.getElementById("renameSessionBtn");
-const deleteSessionBtn = document.getElementById("deleteSessionBtn");
 const planOptionList = document.getElementById("planOptionList");
 const planOptionEmpty = document.getElementById("planOptionEmpty");
 const activeIntentBadge = document.getElementById("activeIntentBadge");
@@ -46,7 +42,6 @@ const recallList = document.getElementById("recallList");
 const recallEmpty = document.getElementById("recallEmpty");
 const promptChips = document.querySelectorAll(".prompt-chip");
 const workspaceDrawerToggle = document.querySelector(".workspace-drawer-toggle");
-const headerActionMenu = document.querySelector("[data-header-menu]");
 const workspaceShell = document.getElementById("workspaceShell");
 const sessionPanel = document.getElementById("sessionPanel");
 const sidebarResizeHandle = document.getElementById("sidebarResizeHandle");
@@ -64,6 +59,9 @@ let recallItems = [];
 let checkpointItems = [];
 let memorySnapshot = null;
 let selectedComparisonPlanIds = new Set();
+let isReplyStreaming = false;
+let tripPanelPendingRefresh = false;
+let tripPanelBaselineSignature = "";
 const SIDEBAR_WIDTH_STORAGE_KEY = "travel_agent_sidebar_width";
 const SIDEBAR_COLLAPSED_STORAGE_KEY = "travel_agent_sidebar_collapsed";
 const SIDEBAR_MIN_WIDTH = 260;
@@ -94,6 +92,15 @@ function stripMarkdownForPreview(rawText) {
   text = text.replace(/[*_~|#>`]/g, " ");
   text = text.replace(/\s+/g, " ");
   return text.trim();
+}
+
+
+function compactPreviewText(rawText, maxLength = 140) {
+  const text = stripMarkdownForPreview(rawText);
+  if (!text || text.length <= maxLength) {
+    return text;
+  }
+  return `${text.slice(0, Math.max(0, maxLength - 1)).trim()}…`;
 }
 
 function formatStayPriceSource(priceSource) {
@@ -340,13 +347,6 @@ function scrollToBottom() {
 }
 
 
-function closeHeaderActionMenu() {
-  if (headerActionMenu?.open) {
-    headerActionMenu.removeAttribute("open");
-  }
-}
-
-
 function closeWorkspaceDrawer() {
   if (workspaceDrawerToggle?.open) {
     workspaceDrawerToggle.removeAttribute("open");
@@ -517,6 +517,11 @@ function renderSessionList() {
       shell.className = "session-card-shell";
 
       const isActive = item.id === currentSessionId;
+      const activeTrip = isActive ? getCurrentExportTrip() : null;
+      const canExport = Boolean(isActive && currentSessionId && activeTrip?.id);
+      const exportDisabledAttrs = canExport
+        ? ""
+        : ' disabled title="生成正式行程后可导出"';
       shell.innerHTML = `
         <button type="button" class="session-card ${isActive ? "is-active" : ""}" data-role="open">
           <div class="session-card-title-row">
@@ -535,6 +540,14 @@ function renderSessionList() {
               item?.is_pinned ? "取消置顶" : "置顶"
             }</button>
             <button type="button" class="session-menu-btn" data-action="rename">重命名</button>
+            ${
+              isActive
+                ? `
+                  <button type="button" class="session-menu-btn" data-action="export-markdown"${exportDisabledAttrs}>导出 Markdown</button>
+                  <button type="button" class="session-menu-btn" data-action="export-pdf"${exportDisabledAttrs}>导出 PDF</button>
+                `
+                : ""
+            }
             <button type="button" class="session-menu-btn danger" data-action="delete">删除</button>
           </div>
         </details>
@@ -565,6 +578,22 @@ function renderSessionList() {
           }
           if (action === "rename") {
             await renameSessionById(item.id);
+            return;
+          }
+          if (action === "export-markdown") {
+            try {
+              await downloadTripExport("markdown");
+            } catch (error) {
+              window.alert(error.message || "导出 Markdown 失败");
+            }
+            return;
+          }
+          if (action === "export-pdf") {
+            try {
+              await downloadTripExport("pdf");
+            } catch (error) {
+              window.alert(error.message || "导出 PDF 失败");
+            }
             return;
           }
           if (action === "delete") {
@@ -833,6 +862,7 @@ function renderComparisons() {
 
 function renderTrips() {
   renderEmptyState(tripList, tripEmpty, tripItems.length > 0);
+  renderCurrentTripPanel();
   if (!tripItems.length) {
     return;
   }
@@ -1272,6 +1302,15 @@ function buildTripDayDigest(day) {
   if (cleanSummary) {
     return cleanSummary;
   }
+  if (day?.day_type === "arrival") {
+    const firstPeriod = Array.isArray(day?.periods) ? day.periods[0] : null;
+    const firstBlock = Array.isArray(firstPeriod?.blocks) ? firstPeriod.blocks[0] : null;
+    return stripMarkdownForPreview(
+      [firstBlock?.transport || "", firstBlock?.activity || "", firstBlock?.note || ""]
+        .filter(Boolean)
+        .join("，")
+    );
+  }
 
   const items = Array.isArray(day.items) ? day.items : [];
   const spotSequence = items.find((item) => item?.type === "spot_sequence");
@@ -1297,10 +1336,16 @@ function buildTripDayDigest(day) {
 
 function renderTripDayDigestMarkup(day) {
   const digest = buildTripDayDigest(day) || "系统已写入当日安排，等待进一步细化。";
+  const kicker = day?.day_type === "arrival"
+    ? "Day 0 到达日"
+    : `第 ${escapeHtml(String(day?.day_no || ""))} 天`;
+  const title = day?.title || (day?.day_type === "arrival"
+    ? "Day 0 到达日"
+    : ("第 " + (day?.day_no || "") + " 天"));
   return `
     <article class="trip-day-digest-card">
-      <div class="trip-day-digest-kicker">第 ${escapeHtml(String(day?.day_no || ""))} 天</div>
-      <div class="trip-day-digest-title">${escapeHtml(day?.title || ("第 " + (day?.day_no || "") + " 天"))}</div>
+      <div class="trip-day-digest-kicker">${kicker}</div>
+      <div class="trip-day-digest-title">${escapeHtml(title)}</div>
       <div class="trip-day-digest-copy">${escapeHtml(digest)}</div>
       ${
         day?.city_name
@@ -1313,7 +1358,7 @@ function renderTripDayDigestMarkup(day) {
 
 
 function renderTripDigestGrid(item) {
-  const days = getTripItineraryDays(item);
+  const days = getTripDisplayDays(item);
   if (!days.length) {
     return "";
   }
@@ -1433,125 +1478,41 @@ function renderWorkspaceSyncOverview(payload) {
 
 function renderTripHeroMarkup(item, payload) {
   const documentPayload = item?.delivery_payload || {};
-  const arrival = documentPayload?.arrival || {};
-  const stay = documentPayload?.stay || {};
-  const budget = documentPayload?.budget || {};
-  const stayItems = Array.isArray(stay?.items) ? stay.items : [];
-  const primaryStay = stayItems.find((entry) => entry && typeof entry === "object") || null;
   const destination = item?.primary_destination || "目的地待补充";
   const totalDays = item?.total_days ? String(item.total_days) + " 天" : "天数待补充";
-  const tripState = payload?.active_trip_id ? "已同步正式行程" : "已同步当前主方案";
-  const comparisonState = payload?.auto_compared_options ? "已自动比较并推荐" : "当前还没有自动比较";
-  const recommendedState = payload?.recommended_plan_option_id ? "当前已有推荐方案" : "当前按激活方案输出";
-  const summary = stripMarkdownForPreview(
-    documentPayload?.overview?.summary || item?.summary || payload?.active_plan_summary || ""
+  const summary = compactPreviewText(
+    documentPayload?.overview?.summary || item?.summary || payload?.active_plan_summary || "",
+    96
   );
-  const routeSummary = getTripHeroRouteSummary(item);
-  const heroInsights = [
-    budget?.summary
-      ? {
-          tone: "budget",
-          kicker: "预算摘要",
-          title: stripMarkdownForPreview(budget.summary),
-          meta: Array.isArray(budget?.items) ? budget.items.slice(0, 2).join(" · ") : "",
-        }
-      : null,
-    arrival?.summary || arrival?.recommended_mode
-      ? {
-          tone: "arrival",
-          kicker: "到达方式",
-          title: stripMarkdownForPreview(arrival.summary || arrival.recommended_mode || "已整理到达建议"),
-          meta: [arrival.duration_text, arrival.price_text, payload?.rail_ticket_status].filter(Boolean).join(" · "),
-        }
-      : null,
-    primaryStay
-      ? {
-          tone: "stay",
-          kicker: "住宿主结论",
-          title: stripMarkdownForPreview(primaryStay["name"] || primaryStay.name || "已生成住宿建议"),
-          meta: [
-            primaryStay["价格"] || primaryStay.price_text || "",
-            formatStayPriceSource(primaryStay["价格来源"] || primaryStay.price_source || ""),
-            primaryStay["片区"] || primaryStay.district || "",
-          ]
-            .filter(Boolean)
-            .join(" · "),
-        }
-      : null,
-  ].filter(Boolean);
-  const recommendationLead = Array.isArray(payload?.recommendation_reasons) && payload.recommendation_reasons.length
-    ? stripMarkdownForPreview(payload.recommendation_reasons[0] || "")
-    : "";
   const heroBadges = [
     payload?.active_trip_id ? "正式行程已生成" : "当前主方案",
-    item?.total_days ? `${item.total_days} 天安排` : "",
-    payload?.auto_compared_options ? "系统已自动比较" : "当前按激活方案推进",
     payload?.trip_document_ready ? "成品行程单已生成" : "",
+    item?.total_days ? `${item.total_days} 天安排` : "",
   ].filter(Boolean);
+  const compactMeta = [destination, totalDays].filter(Boolean).join(" · ");
 
   return `
     <section class="trip-hero-card">
-      <div class="trip-hero-cover">
-        <div class="trip-hero-main">
-          <div class="trip-hero-kicker">主方案封面</div>
+      <div class="trip-hero-main trip-hero-main-compact">
+        <div class="trip-hero-title-row">
           <div class="trip-hero-title">${escapeHtml(item?.title || payload?.active_trip_title || "旅行方案")}</div>
           ${
-            summary
-              ? `<div class="trip-hero-copy">${escapeHtml(summary)}</div>`
-              : ""
-          }
-          ${
-            recommendationLead
-              ? `<div class="trip-hero-note">${escapeHtml("推荐重点：" + recommendationLead)}</div>`
-              : ""
-          }
-          ${
-            heroBadges.length
-              ? `<div class="trip-hero-badges">${heroBadges.map((badge) => `<span class="trip-hero-badge">${escapeHtml(badge)}</span>`).join("")}</div>`
-              : ""
-          }
-          ${
-            routeSummary
-              ? `<div class="trip-hero-route"><span>路线提要</span><strong>${escapeHtml(routeSummary)}</strong></div>`
+            compactMeta
+              ? `<div class="trip-hero-meta-inline">${escapeHtml(compactMeta)}</div>`
               : ""
           }
         </div>
-        <div class="trip-hero-facts">
-          <div class="trip-hero-fact">
-            <div class="trip-hero-fact-label">目的地</div>
-            <div class="trip-hero-fact-value">${escapeHtml(destination)}</div>
-          </div>
-          <div class="trip-hero-fact">
-            <div class="trip-hero-fact-label">行程天数</div>
-            <div class="trip-hero-fact-value">${escapeHtml(totalDays)}</div>
-          </div>
-          <div class="trip-hero-fact">
-            <div class="trip-hero-fact-label">方案状态</div>
-            <div class="trip-hero-fact-value">${escapeHtml(tripState)}</div>
-          </div>
-          <div class="trip-hero-fact">
-            <div class="trip-hero-fact-label">推荐决策</div>
-            <div class="trip-hero-fact-value">${escapeHtml(payload?.auto_compared_options ? comparisonState : recommendedState)}</div>
-          </div>
-        </div>
+        ${
+          summary
+            ? `<div class="trip-hero-copy">${escapeHtml(summary)}</div>`
+            : ""
+        }
+        ${
+          heroBadges.length
+            ? `<div class="trip-hero-badges">${heroBadges.slice(0, 2).map((badge) => `<span class="trip-hero-badge">${escapeHtml(badge)}</span>`).join("")}</div>`
+            : ""
+        }
       </div>
-      ${
-        heroInsights.length
-          ? `<div class="trip-hero-insights">${
-              heroInsights.map((insight) => `
-                <article class="trip-hero-insight trip-hero-insight-${escapeHtml(insight.tone || "generic")}">
-                  <div class="trip-hero-insight-kicker">${escapeHtml(insight.kicker || "重点")}</div>
-                  <div class="trip-hero-insight-title">${escapeHtml(insight.title || "已整理主结论")}</div>
-                  ${
-                    insight.meta
-                      ? `<div class="trip-hero-insight-meta">${escapeHtml(insight.meta)}</div>`
-                      : ""
-                  }
-                </article>
-              `).join("")
-            }</div>`
-          : ""
-      }
     </section>
   `;
 }
@@ -1644,8 +1605,30 @@ function getTripItineraryDays(item) {
 }
 
 
+function getTripDeliveryPayload(item) {
+  return item?.delivery_payload && typeof item.delivery_payload === "object"
+    ? item.delivery_payload
+    : {};
+}
+
+
+function getTripDisplayDays(item) {
+  const payload = getTripDeliveryPayload(item);
+  if (Array.isArray(payload?.daily_itinerary) && payload.daily_itinerary.length) {
+    return payload.daily_itinerary.filter((day) => day && typeof day === "object");
+  }
+  return getTripItineraryDays(item);
+}
+
+
+function getTripArrivalDay(item) {
+  return getTripDisplayDays(item).find((day) => day?.day_type === "arrival") || null;
+}
+
+
 function getTripHeroRouteSummary(item) {
-  const daySummaries = getTripItineraryDays(item)
+  const daySummaries = getTripDisplayDays(item)
+    .filter((day) => day?.day_type !== "arrival")
     .map((day, index) => {
       const sequenceItem = Array.isArray(day?.items)
         ? day.items.find((entry) => entry?.type === "spot_sequence" && Array.isArray(entry?.spot_sequence) && entry.spot_sequence.length)
@@ -1662,83 +1645,6 @@ function getTripHeroRouteSummary(item) {
 
   return daySummaries.join(" · ");
 }
-
-
-function buildTripHeroInsight(type, card) {
-  const data = card?.data && typeof card.data === "object" ? card.data : {};
-  if (type === "budget") {
-    const items = Array.isArray(data.items) ? data.items.filter(Boolean) : [];
-    return {
-      tone: "budget",
-      kicker: "预算概览",
-      title: stripMarkdownForPreview(data.summary || card?.summary || "") || "已整理预算信息",
-      meta: items.slice(0, 2).join(" · "),
-    };
-  }
-
-  if (type === "arrival") {
-    const summary = stripMarkdownForPreview(data.summary || card?.summary || "");
-    return {
-      tone: "arrival",
-      kicker: "到达方式",
-      title:
-        summary ||
-        [
-          [data.origin_city, data.destination_city].filter(Boolean).join(" -> "),
-          data.recommended_mode,
-        ]
-          .filter(Boolean)
-          .join("，") ||
-        "已整理跨城到达建议",
-      meta: [data.duration_text, data.price_text, data.booking_status].filter(Boolean).join(" · "),
-    };
-  }
-
-  const firstStay = Array.isArray(data.items) ? data.items.find((item) => item && typeof item === "object") : null;
-  return {
-    tone: "stay",
-    kicker: "住宿主结论",
-    title:
-      firstStay?.name
-        ? "优先考虑 " + firstStay.name
-        : (stripMarkdownForPreview(data.filter_summary || card?.summary || "") || "已生成住宿建议"),
-    meta: [
-      firstStay?.budget_text,
-      formatStayPriceSource(firstStay?.price_source),
-      firstStay?.distance_text,
-      firstStay?.address,
-    ]
-      .filter(Boolean)
-      .join(" · "),
-  };
-}
-
-
-function getTripHeroInsights(item) {
-  const cards = getStructuredCards(item);
-  if (!cards.length) {
-    return [];
-  }
-
-  const insights = [];
-  const budgetCard = cards.find((card) => card?.type === "budget_summary");
-  if (budgetCard) {
-    insights.push(buildTripHeroInsight("budget", budgetCard));
-  }
-
-  const arrivalCard = cards.find((card) => card?.type === "arrival_recommendation");
-  if (arrivalCard) {
-    insights.push(buildTripHeroInsight("arrival", arrivalCard));
-  }
-
-  const stayCard = cards.find((card) => card?.type === "stay_recommendations");
-  if (stayCard) {
-    insights.push(buildTripHeroInsight("stay", stayCard));
-  }
-
-  return insights.filter((item) => item && (item.title || item.meta));
-}
-
 
 function getTripTimelineItems(day) {
   if (!Array.isArray(day?.items)) {
@@ -1773,6 +1679,32 @@ function getTripRenderableDayItems(day) {
     return [];
   }
   return day.items.filter((item) => item && typeof item === "object");
+}
+
+
+function renderTripNarrativeBlock(block) {
+  const title = block?.title || "行程安排";
+  const detailRows = [
+    block?.transport ? ["交通", block.transport] : null,
+    block?.activity ? ["玩法", block.activity] : null,
+    block?.food ? ["美食", block.food] : null,
+    block?.note ? ["说明", block.note] : null,
+  ].filter(Boolean);
+
+  return `
+    <article class="trip-itinerary-item trip-itinerary-item-brief">
+      <div class="trip-itinerary-item-head">
+        <div class="trip-itinerary-item-title">${escapeHtml(String(title))}</div>
+        <div class="trip-itinerary-item-badge">${escapeHtml(block?.badge || "安排")}</div>
+      </div>
+      ${detailRows.map(([label, value]) => `
+        <div class="trip-itinerary-item-row">
+          <span>${escapeHtml(label)}</span>
+          <strong>${escapeHtml(String(value))}</strong>
+        </div>
+      `).join("")}
+    </article>
+  `;
 }
 
 
@@ -1931,20 +1863,24 @@ function renderTripPeriodItem(item) {
   if (item?.type === "spot_sequence" || item?.type === "transit") {
     return renderTripTimelineItem(item);
   }
+  if (!item?.type && (item?.title || item?.transport || item?.activity || item?.food || item?.note)) {
+    return renderTripNarrativeBlock(item);
+  }
   return renderStructuredCardMarkup(item);
 }
 
 
-function renderTripDayPeriodGroup(period, items) {
+function renderTripDayPeriodGroup(period, items, options = {}) {
   const visibleItems = Array.isArray(items) ? items.filter(Boolean) : [];
   if (!visibleItems.length) {
     return "";
   }
+  const title = options?.label || formatTripPeriodLabel(period?.key || period);
 
   return `
     <section class="trip-day-period">
       <div class="trip-day-period-head">
-        <div class="trip-day-period-title">${escapeHtml(formatTripPeriodLabel(period))}</div>
+        <div class="trip-day-period-title">${escapeHtml(title)}</div>
         <div class="trip-day-period-count">${escapeHtml(String(visibleItems.length) + " 项")}</div>
       </div>
       <div class="trip-day-period-grid">
@@ -1956,27 +1892,43 @@ function renderTripDayPeriodGroup(period, items) {
 
 
 function renderTripDayMarkup(day) {
-  const renderableItems = getTripRenderableDayItems(day);
-  const periodOrder = ["morning", "afternoon", "evening"];
-  const groupedItems = {
-    morning: [],
-    afternoon: [],
-    evening: [],
-  };
-  renderableItems.forEach((item) => {
-    const period = periodOrder.includes(item?.time_period) ? item.time_period : "afternoon";
-    groupedItems[period].push(item);
-  });
-  const periodMarkup = periodOrder
-    .map((period) => renderTripDayPeriodGroup(period, groupedItems[period]))
-    .filter(Boolean)
-    .join("");
+  let periodMarkup = "";
+  if (Array.isArray(day?.periods) && day.periods.length) {
+    periodMarkup = day.periods
+      .map((period) => renderTripDayPeriodGroup(period, period?.blocks || [], { label: period?.label }))
+      .filter(Boolean)
+      .join("");
+  } else {
+    const renderableItems = getTripRenderableDayItems(day);
+    const periodOrder = ["morning", "afternoon", "evening"];
+    const groupedItems = {
+      morning: [],
+      afternoon: [],
+      evening: [],
+    };
+    renderableItems.forEach((item) => {
+      const period = periodOrder.includes(item?.time_period) ? item.time_period : "afternoon";
+      groupedItems[period].push(item);
+    });
+    periodMarkup = periodOrder
+      .map((period) => renderTripDayPeriodGroup(period, groupedItems[period]))
+      .filter(Boolean)
+      .join("");
+  }
+
+  const dayKicker = day?.day_type === "arrival"
+    ? "Day 0 到达日"
+    : `第 ${escapeHtml(String(day?.day_no || ""))} 天`;
+  const dayTitle = day?.title || (day?.day_type === "arrival"
+    ? "Day 0 到达日"
+    : ("第 " + (day?.day_no || "") + " 天"));
+
   return `
     <section class="trip-day-card">
       <div class="trip-day-head">
         <div>
-          <div class="trip-day-kicker">第 ${escapeHtml(String(day?.day_no || ""))} 天</div>
-          <div class="trip-day-title">${escapeHtml(day?.title || ("第 " + (day?.day_no || "") + " 天"))}</div>
+          <div class="trip-day-kicker">${dayKicker}</div>
+          <div class="trip-day-title">${escapeHtml(dayTitle)}</div>
         </div>
         <div class="trip-day-city">${escapeHtml(day?.city_name || "目的地待补充")}</div>
       </div>
@@ -2001,20 +1953,171 @@ function renderTripDayMarkup(day) {
 
 
 function renderTripItineraryMarkup(item) {
-  const days = getTripItineraryDays(item);
+  const days = getTripDisplayDays(item);
   if (!days.length) {
     return "";
   }
+  const itineraryDayCount = days.filter((day) => day?.day_type !== "arrival").length;
+  const arrivalDayCount = days.filter((day) => day?.day_type === "arrival").length;
+  const countText = arrivalDayCount
+    ? `${itineraryDayCount || 0} 天行程 + ${arrivalDayCount} 个到达日`
+    : `${days.length} 天`;
 
   return `
     <section class="trip-itinerary-stack">
       <div class="trip-itinerary-stack-head">
         <div class="trip-itinerary-stack-title">每日行程时间线</div>
-        <div class="trip-itinerary-stack-count">${escapeHtml(String(days.length) + " 天")}</div>
+        <div class="trip-itinerary-stack-count">${escapeHtml(countText)}</div>
       </div>
       <div class="trip-itinerary-day-list">
         ${days.map((day) => renderTripDayMarkup(day)).join("")}
       </div>
+    </section>
+  `;
+}
+
+
+function renderTripArrivalSection(item) {
+  const payload = getTripDeliveryPayload(item);
+  const arrival = payload?.arrival || {};
+  if (!arrival || typeof arrival !== "object" || !Object.keys(arrival).length) {
+    return "";
+  }
+
+  const topCandidate = Array.isArray(arrival?.candidates)
+    ? arrival.candidates.find((entry) => entry && typeof entry === "object")
+    : null;
+  const detailRows = [
+    ["推荐方式", arrival.recommended_mode || "待补充"],
+    ["推荐车次", topCandidate?.train_no || (arrival.ticket_status === "placeholder" ? "暂未获取到真实车次" : "待补充")],
+    ["出发/到达", [topCandidate?.depart_station || arrival.origin_city || "", topCandidate?.arrive_station || arrival.destination_city || ""].filter(Boolean).join(" -> ") || "待补充"],
+    ["发到时间", [topCandidate?.depart_time || "", topCandidate?.arrive_time || ""].filter(Boolean).join(" -> ") || "待补充"],
+    ["预计耗时", arrival.duration_text || "待补充"],
+    ["票价参考", topCandidate?.price_text || arrival.price_text || "待补充"],
+    ["余票参考", topCandidate?.availability_text || (arrival.ticket_status === "placeholder" ? "暂未获取到真实余票" : "待补充")],
+    ["数据来源", arrival.data_source || "unknown"],
+    ["查询时间", arrival.fetched_at || "待补充"],
+  ];
+  const officialNotice = arrival?.official_notice?.notice || "车次、票价、余票与购票规则请以铁路12306官网/App为准。";
+
+  return `
+    <section class="trip-detail-section trip-arrival-section">
+      <div class="trip-section-head">
+        <div class="trip-section-title">到达方式</div>
+        <div class="trip-section-copy">${escapeHtml(arrival.ticket_status === "placeholder" ? "当前为占位到达建议" : "已接入真实车次候选")}</div>
+      </div>
+      <div class="trip-detail-grid">
+        ${detailRows.map(([label, value]) => `
+          <article class="trip-detail-card">
+            <div class="trip-detail-label">${escapeHtml(label)}</div>
+            <div class="trip-detail-value">${escapeHtml(String(value || "待补充"))}</div>
+          </article>
+        `).join("")}
+      </div>
+      ${
+        arrival?.summary
+          ? `<div class="trip-detail-note">${escapeHtml(arrival.summary)}</div>`
+          : ""
+      }
+      <div class="trip-detail-notice">${escapeHtml("12306 提醒：" + officialNotice)}</div>
+    </section>
+  `;
+}
+
+
+function renderTripMapPreviewSection(item) {
+  const payload = getTripDeliveryPayload(item);
+  const mapPreview = payload?.map_preview || {};
+  if (!mapPreview || typeof mapPreview !== "object" || !Object.keys(mapPreview).length) {
+    return "";
+  }
+
+  const markers = Array.isArray(mapPreview?.markers)
+    ? mapPreview.markers.filter((entry) => entry && typeof entry === "object")
+    : [];
+  const links = [
+    (mapPreview?.personal_map_open_url || mapPreview?.personal_map_url)
+      ? `<a class="trip-map-link is-primary" href="${escapeHtml(mapPreview.personal_map_open_url || mapPreview.personal_map_url)}" target="_blank" rel="noreferrer">打开专属地图预览</a>`
+      : "",
+    (mapPreview?.personal_map_url && mapPreview?.personal_map_open_url && mapPreview.personal_map_url !== mapPreview.personal_map_open_url)
+      ? `<a class="trip-map-link" href="${escapeHtml(mapPreview.personal_map_url)}" target="_blank" rel="noreferrer">手机端打开高德App</a>`
+      : "",
+    mapPreview?.official_map_url
+      ? `<a class="trip-map-link" href="${escapeHtml(mapPreview.official_map_url)}" target="_blank" rel="noreferrer">打开高德地图</a>`
+      : "",
+    mapPreview?.navigation_url
+      ? `<a class="trip-map-link" href="${escapeHtml(mapPreview.navigation_url)}" target="_blank" rel="noreferrer">导航前往</a>`
+      : "",
+    mapPreview?.taxi_url
+      ? `<a class="trip-map-link" href="${escapeHtml(mapPreview.taxi_url)}" target="_blank" rel="noreferrer">打车路线</a>`
+      : "",
+  ].filter(Boolean);
+
+  return `
+    <section class="trip-detail-section trip-map-section">
+      <div class="trip-section-head">
+        <div class="trip-section-title">地图预览</div>
+        <div class="trip-section-copy">${escapeHtml(mapPreview.provider_mode || "fallback_link")}</div>
+      </div>
+      <div class="trip-map-summary">
+        <div class="trip-map-title">${escapeHtml(mapPreview.title || "行程地图预览")}</div>
+        <div class="trip-map-meta">${escapeHtml([mapPreview.city, mapPreview.center, mapPreview.fetched_at].filter(Boolean).join(" · "))}</div>
+      </div>
+      ${
+        markers.length
+          ? `<div class="trip-map-marker-list">${markers.slice(0, 8).map((marker) => `
+              <span class="trip-map-marker-chip">${escapeHtml(marker.name || marker.location || "点位")}</span>
+            `).join("")}</div>`
+          : ""
+      }
+      ${
+        links.length
+          ? `<div class="trip-map-links">${links.join("")}</div>`
+          : ""
+      }
+      ${
+        mapPreview?.degraded_reason
+          ? `<div class="trip-detail-note">${escapeHtml("地图预览已降级：" + mapPreview.degraded_reason)}</div>`
+          : ""
+      }
+    </section>
+  `;
+}
+
+
+function renderCurrentTripPanel() {
+  if (!currentTripPanel) {
+    return;
+  }
+  const trip = getCurrentExportTrip();
+  const currentSignature = getTripPanelSignature(trip);
+  if (!trip || isReplyStreaming || !trip.document_markdown) {
+    currentTripPanel.classList.add("hidden");
+    currentTripPanel.innerHTML = "";
+    return;
+  }
+  if (tripPanelPendingRefresh && currentSignature === tripPanelBaselineSignature) {
+    currentTripPanel.classList.add("hidden");
+    currentTripPanel.innerHTML = "";
+    return;
+  }
+  if (tripPanelPendingRefresh && currentSignature !== tripPanelBaselineSignature) {
+    tripPanelPendingRefresh = false;
+    tripPanelBaselineSignature = currentSignature;
+  }
+
+  const payload = {
+    active_trip_id: trip.id,
+    active_trip_title: trip.title,
+    trip_document_ready: Boolean(trip.document_markdown),
+    recommendation_reasons: getTripDeliveryPayload(trip)?.recommendation_reasons?.items || [],
+  };
+  currentTripPanel.classList.remove("hidden");
+  currentTripPanel.innerHTML = `
+    <section class="current-trip-board">
+      ${renderTripHeroMarkup(trip, payload)}
+      ${renderTripItineraryMarkup(trip)}
+      ${renderTripDocumentMarkup(trip)}
     </section>
   `;
 }
@@ -2846,6 +2949,10 @@ async function streamReply(text) {
   conversation.push({ role: "user", content: text });
   appendUserMessage(text);
   hideWelcomeCard();
+  tripPanelBaselineSignature = getTripPanelSignature(getCurrentExportTrip());
+  tripPanelPendingRefresh = true;
+  isReplyStreaming = true;
+  renderCurrentTripPanel();
 
   const assistantMessage = appendAssistantMessage();
   setPhaseState(assistantMessage, "planning");
@@ -2921,6 +3028,7 @@ async function streamReply(text) {
           role: "assistant",
           content: assistantMessage.rawContent || assistantMessage.placeholder.textContent,
         });
+        isReplyStreaming = false;
         loadSessions();
         refreshInsightPanels();
         loadPlanOptions();
@@ -2956,6 +3064,7 @@ async function streamReply(text) {
         role: "assistant",
         content: assistantMessage.rawContent || assistantMessage.placeholder.textContent,
       });
+      isReplyStreaming = false;
       loadSessions();
       refreshInsightPanels();
       loadPlanOptions();
@@ -2969,7 +3078,9 @@ async function streamReply(text) {
       role: "assistant",
       content: assistantMessage.rawContent || assistantMessage.placeholder.textContent,
     });
+    isReplyStreaming = false;
   } finally {
+    isReplyStreaming = false;
     sendBtn.disabled = false;
     messageInput.focus();
   }
@@ -2979,6 +3090,8 @@ async function streamReply(text) {
 function clearConversation() {
   conversation.length = 0;
   messageList.innerHTML = "";
+  tripPanelPendingRefresh = false;
+  tripPanelBaselineSignature = "";
   showWelcomeCard();
   saveCurrentSessionId("");
   updateActiveSessionTitle("新对话");
@@ -3030,6 +3143,8 @@ async function loadSessions() {
 function resetConversationView() {
   conversation.length = 0;
   messageList.innerHTML = "";
+  tripPanelPendingRefresh = false;
+  tripPanelBaselineSignature = "";
   showWelcomeCard();
 }
 
@@ -3037,6 +3152,8 @@ function resetConversationView() {
 async function switchSession(sessionId, title = "新对话") {
   saveCurrentSessionId(sessionId);
   updateActiveSessionTitle(title);
+  tripPanelPendingRefresh = false;
+  tripPanelBaselineSignature = "";
   await Promise.all([loadSessionHistory(sessionId), loadPlanOptions(), refreshInsightPanels()]);
 }
 
@@ -3119,19 +3236,35 @@ function getCurrentExportTrip() {
 }
 
 
+function getTripPanelSignature(trip) {
+  if (!trip || typeof trip !== "object") {
+    return "";
+  }
+  return [
+    trip.id || "",
+    trip.updated_at || "",
+    trip.document_markdown ? "doc" : "nodoc",
+  ].join("::");
+}
+
+
 function updateExportButtonsState() {
-  const hasTrip = Boolean(currentSessionId && getCurrentExportTrip());
-  [exportMarkdownBtn, exportPdfBtn].forEach((button) => {
-    if (!button) {
-      return;
-    }
-    button.disabled = !hasTrip;
-  });
+  if (Array.isArray(sessionItems) && sessionItems.length && sessionList) {
+    renderSessionList();
+  }
 }
 
 
 function extractDownloadFilename(disposition, fallbackName) {
   const value = disposition || "";
+  const utf8Match = value.match(/filename\*\s*=\s*UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1]);
+    } catch (_error) {
+      // ignore malformed filename*
+    }
+  }
   const match = value.match(/filename=\"?([^\";]+)\"?/i);
   return match?.[1] || fallbackName;
 }
@@ -3187,9 +3320,6 @@ promptChips.forEach((button) => {
 
 
 document.addEventListener("click", (event) => {
-  if (headerActionMenu?.open && !headerActionMenu.contains(event.target)) {
-    closeHeaderActionMenu();
-  }
   if (workspaceDrawerToggle?.open && !workspaceDrawerToggle.contains(event.target)) {
     closeWorkspaceDrawer();
   }
@@ -3241,7 +3371,6 @@ composerForm.addEventListener("submit", async (event) => {
 });
 
 
-clearBtn?.addEventListener("click", clearConversation);
 newSessionBtn?.addEventListener("click", startNewSession);
 refreshSessionsBtn?.addEventListener("click", loadSessions);
 if (savePlanBtn) {
@@ -3255,32 +3384,6 @@ if (createTripBtn) {
 }
 createCheckpointBtn?.addEventListener("click", createCheckpoint);
 rewindCheckpointBtn?.addEventListener("click", rewindLatestCheckpoint);
-renameSessionBtn?.addEventListener("click", renameCurrentSession);
-deleteSessionBtn?.addEventListener("click", deleteCurrentSession);
-exportMarkdownBtn?.addEventListener("click", async () => {
-  try {
-    await downloadTripExport("markdown");
-  } catch (error) {
-    window.alert(error.message || "导出 Markdown 失败");
-  }
-});
-exportPdfBtn?.addEventListener("click", async () => {
-  try {
-    await downloadTripExport("pdf");
-  } catch (error) {
-    window.alert(error.message || "导出 PDF 失败");
-  }
-});
-
-[
-  clearBtn,
-  createCheckpointBtn,
-  rewindCheckpointBtn,
-  renameSessionBtn,
-  deleteSessionBtn,
-].forEach((button) => {
-  button?.addEventListener("click", closeHeaderActionMenu);
-});
 
 autoResizeTextarea();
 updateExportButtonsState();

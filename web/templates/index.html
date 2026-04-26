@@ -67,25 +67,6 @@
             </div>
           </div>
 
-          <div class="chat-header-actions chat-header-actions-compact">
-            <div class="document-actions" aria-label="行程单导出">
-              <button type="button" class="ghost-button" id="exportMarkdownBtn">导出 Markdown</button>
-              <button type="button" class="ghost-button" id="exportPdfBtn">导出 PDF</button>
-            </div>
-
-            <div class="secondary-action-row">
-              <details class="header-action-menu" data-header-menu>
-                <summary class="header-action-trigger" aria-label="更多操作" title="更多操作">
-                  <span class="header-action-trigger-icon" aria-hidden="true">...</span>
-                </summary>
-                <div class="header-action-panel">
-                  <button type="button" class="ghost-button" id="renameSessionBtn">重命名会话</button>
-                  <button type="button" class="ghost-button danger" id="deleteSessionBtn">删除会话</button>
-                  <button type="button" class="ghost-button" id="clearBtn">开始新对话</button>
-                </div>
-              </details>
-            </div>
-          </div>
         </header>
 
         <div class="chat-stage chat-stage-dual">
@@ -116,6 +97,8 @@
                 </div>
               </div>
             </section>
+
+            <section class="current-trip-shell hidden" id="currentTripPanel" aria-live="polite"></section>
 
             <div id="messageList"></div>
           </div>

@@ -38,16 +38,16 @@ class TripExportService:
       * { box-sizing: border-box; }
       body {
         margin: 0;
-        padding: 40px;
+        padding: 28px;
         background: linear-gradient(180deg, var(--bg), #f3eadf);
         color: var(--ink);
         font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
         line-height: 1.75;
       }
       .document-shell {
-        max-width: 920px;
+        max-width: 860px;
         margin: 0 auto;
-        padding: 36px 42px;
+        padding: 32px 34px;
         background: var(--paper);
         border: 1px solid var(--line);
         border-radius: 24px;
@@ -69,7 +69,9 @@ class TripExportService:
         font-size: 18px;
       }
       p, li { font-size: 14px; }
+      p { margin: 0 0 10px; }
       ul, ol { padding-left: 22px; }
+      li + li { margin-top: 6px; }
       code, pre {
         font-family: "Cascadia Mono", "Consolas", monospace;
         background: #f7efe6;
@@ -107,6 +109,15 @@ class TripExportService:
         border: none;
         border-top: 1px solid var(--line);
       }
+      a {
+        color: var(--accent);
+        text-decoration: none;
+        word-break: break-all;
+      }
+      @page {
+        size: A4;
+        margin: 14mm 12mm;
+      }
     """
 
     def ensure_document_markdown(self, trip) -> str:
@@ -130,15 +141,23 @@ class TripExportService:
         return markdown or "# 旅行方案\n\n当前正式行程还没有可导出的内容。"
 
     def build_markdown_filename(self, trip) -> str:
-        base = _safe_text(getattr(trip, "title", None)) or _safe_text(
-            getattr(trip, "primary_destination", None)
-        )
-        if not base:
-            base = "trip-document"
-        return f"{_slugify_filename(base)}.md"
+        return f"{_slugify_filename(self._build_display_filename_base(trip))}.md"
 
     def build_pdf_filename(self, trip) -> str:
-        return self.build_markdown_filename(trip).rsplit(".", 1)[0] + ".pdf"
+        return f"{_slugify_filename(self._build_display_filename_base(trip))}.pdf"
+
+    def _build_display_filename_base(self, trip) -> str:
+        destination = _safe_text(getattr(trip, "primary_destination", None))
+        total_days = getattr(trip, "total_days", None)
+        trip_title = _safe_text(getattr(trip, "title", None))
+        today = datetime.now().strftime("%Y-%m-%d")
+        if destination and total_days:
+            return f"{destination}-{total_days}天-{today}"
+        if destination:
+            return f"{destination}-{today}"
+        if trip_title:
+            return trip_title
+        return f"trip-document-{today}"
 
     def render_printable_html(self, *, trip, markdown_text: str) -> str:
         title = html.escape(_safe_text(getattr(trip, "title", None)) or "旅行方案")
@@ -168,7 +187,7 @@ class TripExportService:
             from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
         except ImportError as exc:  # pragma: no cover - 依赖缺失时走接口错误
             raise ServiceConfigError(
-                "缺少 PDF 导出依赖 reportlab，请先安装 requirements.txt 中的依赖。"
+                "当前环境未安装 PDF 导出依赖 reportlab，请先执行 requirements 安装后再导出 PDF。"
             ) from exc
 
         buffer = BytesIO()
@@ -240,7 +259,7 @@ class TripExportService:
                 continue
             if re.match(r"^\s*[-*]\s+", line):
                 bullet_text = re.sub(r"^\s*[-*]\s+", "", line)
-                story.append(Paragraph("• " + html.escape(bullet_text), bullet))
+                story.append(Paragraph("- " + html.escape(bullet_text), bullet))
                 continue
             if re.match(r"^\s*\d+\.\s+", line):
                 story.append(Paragraph(text, bullet))

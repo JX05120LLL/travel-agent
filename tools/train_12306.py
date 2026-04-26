@@ -5,6 +5,8 @@ from __future__ import annotations
 from langchain_core.tools import tool
 
 from services.train_12306_service import (
+    JisuApiTrainProvider,
+    MCP12306Provider,
     RailTripQuery,
     TuniuFreeApiProvider,
     get_train_12306_service,
@@ -13,6 +15,7 @@ from services.train_12306_service import (
 
 def _render_arrival_payload(payload: dict) -> str:
     official_notice = payload.get("official_notice") or {}
+    provider_status = payload.get("provider_status") or {}
     candidates = payload.get("candidates") or []
 
     lines = [
@@ -31,6 +34,12 @@ def _render_arrival_payload(payload: dict) -> str:
     ]
     if payload.get("degraded_reason"):
         lines.append(f"- 降级原因：{payload.get('degraded_reason')}")
+    if provider_status:
+        lines.append(f"- 命中来源：{provider_status.get('selected_provider') or '未知'}")
+        fallback_errors = provider_status.get("fallback_errors") or []
+        if fallback_errors:
+            lines.append(f"- 降级记录：{'；'.join(str(item) for item in fallback_errors[:3])}")
+
     if candidates:
         lines.extend(["", "### 推荐车次"])
         for index, item in enumerate(candidates[:3], start=1):
@@ -53,7 +62,10 @@ def _render_arrival_payload(payload: dict) -> str:
             if stations:
                 lines.append(f"   - 站点：{stations}")
             if any(meta_parts):
-                lines.append("   - 信息：" + "｜".join(str(part) for part in meta_parts if str(part or "").strip()))
+                lines.append(
+                    "   - 信息："
+                    + " / ".join(str(part) for part in meta_parts if str(part or "").strip())
+                )
 
     lines.extend(
         [
@@ -67,9 +79,15 @@ def _render_arrival_payload(payload: dict) -> str:
             "### 补充说明",
         ]
     )
+
     notes = payload.get("notes") or []
     if not notes:
-        notes = ["当前未获取到更完整的第三方车次信息。"]
+        notes = ["当前未获取到更完整的车次信息。"]
+    if payload.get("provider_mode") == "placeholder" or not candidates:
+        notes = [
+            "暂未获取到真实车次；请不要把下方占位建议当作具体车次。",
+            *notes,
+        ]
     lines.extend(f"- {note}" for note in notes if note)
     return "\n".join(lines)
 
@@ -80,10 +98,7 @@ def plan_12306_arrival(
     destination_city: str,
     depart_date: str = "",
 ) -> str:
-    """铁路/12306 跨城到达建议。
-
-    当前以查询参考与官方提醒为主，不在站内闭环购票。
-    """
+    """铁路/12306 跨城到达建议。"""
     try:
         payload = get_train_12306_service().plan_arrival(
             origin_city=origin_city,
@@ -97,6 +112,25 @@ def plan_12306_arrival(
     return _render_arrival_payload(payload)
 
 
+@tool
+def query_train_tickets_mcp_12306(
+    origin_city: str,
+    destination_city: str,
+    depart_date: str,
+) -> str:
+    """直接查询 12306 MCP provider，便于本地联调和验收。"""
+    try:
+        payload = MCP12306Provider().search_trips(
+            RailTripQuery(
+                origin_city=(origin_city or "").strip(),
+                destination_city=(destination_city or "").strip(),
+                depart_date=(depart_date or "").strip(),
+            )
+        ).to_dict()
+        return _render_arrival_payload(payload)
+    except Exception as exc:  # pragma: no cover - 调试工具兜底
+        return f"12306 MCP 查询失败：{exc}"
+
 
 @tool
 def query_train_tickets_free_api(
@@ -104,7 +138,7 @@ def query_train_tickets_free_api(
     destination_city: str,
     depart_date: str,
 ) -> str:
-    """直接查询第三方火车票 free-api provider，便于单独 smoke 与验收。"""
+    """直接查询第三方火车票 free-api provider，便于实验性 smoke。"""
     try:
         payload = TuniuFreeApiProvider().search_trips(
             RailTripQuery(
@@ -116,3 +150,23 @@ def query_train_tickets_free_api(
         return _render_arrival_payload(payload)
     except Exception as exc:  # pragma: no cover - 调试工具兜底
         return f"第三方火车票查询失败：{exc}"
+
+
+@tool
+def query_train_tickets_jisu_api(
+    origin_city: str,
+    destination_city: str,
+    depart_date: str,
+) -> str:
+    """直接查询 Jisu/极速数据火车票 provider，便于单独 smoke。"""
+    try:
+        payload = JisuApiTrainProvider().search_trips(
+            RailTripQuery(
+                origin_city=(origin_city or "").strip(),
+                destination_city=(destination_city or "").strip(),
+                depart_date=(depart_date or "").strip(),
+            )
+        ).to_dict()
+        return _render_arrival_payload(payload)
+    except Exception as exc:  # pragma: no cover - 调试工具兜底
+        return f"Jisu 火车票查询失败：{exc}"

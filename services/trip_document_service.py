@@ -32,12 +32,18 @@ class TripDocumentService:
         context = structured_context if isinstance(structured_context, dict) else {}
         arrival = cls._extract_arrival(context)
         stay = cls._extract_stay(context)
+        map_preview = cls._extract_map_preview(context)
         budget = cls._extract_assistant_section(context, "budget")
         notes = cls._extract_assistant_section(context, "notes")
         assumptions = cls._extract_assistant_section(context, "assumptions")
         reasons = cls._extract_assistant_section(context, "reasons")
         booking_notices = cls._extract_booking_notices(arrival, stay)
-        daily_itinerary = cls._build_daily_itinerary(trip, arrival=arrival, stay=stay)
+        daily_itinerary = cls._build_daily_itinerary(
+            trip,
+            arrival=arrival,
+            stay=stay,
+            structured_context=context,
+        )
         food = cls._extract_food_summary(trip)
         overview = cls._build_overview(
             trip=trip,
@@ -51,6 +57,7 @@ class TripDocumentService:
             "overview": overview,
             "arrival": arrival,
             "stay": stay,
+            "map_preview": map_preview,
             "daily_itinerary": daily_itinerary,
             "food": food,
             "budget": budget,
@@ -65,6 +72,7 @@ class TripDocumentService:
         overview = payload.get("overview") or {}
         arrival = payload.get("arrival") or {}
         stay = payload.get("stay") or {}
+        map_preview = payload.get("map_preview") or {}
         daily_itinerary = payload.get("daily_itinerary") or []
         food = payload.get("food") or {}
         budget = payload.get("budget") or {}
@@ -144,6 +152,63 @@ class TripDocumentService:
                 notice = arrival["official_notice"]
                 lines.append(f"- 官方提醒：{notice.get('notice')}")
 
+        if map_preview:
+            lines.extend(["", "## 地图导航"])
+            if map_preview.get("title"):
+                lines.append(f"- 导航卡片：{map_preview.get('title')}")
+            if map_preview.get("city"):
+                lines.append(f"- 覆盖城市：{map_preview.get('city')}")
+            markers = map_preview.get("markers") or []
+            if markers:
+                lines.append("- 关键点位：")
+                for marker in markers[:6]:
+                    if not isinstance(marker, dict):
+                        continue
+                    marker_name = marker.get("name") or "点位"
+                    marker_location = marker.get("location") or "坐标待补充"
+                    lines.append(f"  - {marker_name}（{marker_location}）")
+            if map_preview.get("personal_map_open_url") or map_preview.get("personal_map_url"):
+                lines.append(f"- 专属地图预览：{map_preview.get('personal_map_open_url') or map_preview.get('personal_map_url')}")
+            if (
+                map_preview.get("personal_map_url")
+                and map_preview.get("personal_map_open_url")
+                and map_preview.get("personal_map_url") != map_preview.get("personal_map_open_url")
+            ):
+                lines.append(f"- 手机端打开高德 App：{map_preview.get('personal_map_url')}")
+            if map_preview.get("official_map_url"):
+                lines.append(f"- 打开高德地图：{map_preview.get('official_map_url')}")
+            if map_preview.get("navigation_url"):
+                lines.append(f"- 导航前往酒店/首景点：{map_preview.get('navigation_url')}")
+            if map_preview.get("degraded_reason"):
+                lines.append(f"- 地图降级说明：{map_preview.get('degraded_reason')}")
+
+        if daily_itinerary:
+            lines.extend(["", "## 每日行程"])
+            for day in daily_itinerary:
+                day_title = _strip(day.get("title")) or (
+                    "Day 0 到达日"
+                    if day.get("day_type") == "arrival"
+                    else f"Day {day.get('day_no') or ''}"
+                )
+                lines.extend(["", f"### {day_title}"])
+                if day.get("summary"):
+                    lines.append(f"- 摘要：{day.get('summary')}")
+                if day.get("weather"):
+                    lines.append(f"- 天气：{day.get('weather')}")
+                for period in day.get("periods") or []:
+                    lines.append(f"- {period.get('label')}")
+                    for block in period.get("blocks") or []:
+                        title = block.get("title") or "行程安排"
+                        lines.append(f"  - {title}")
+                        if block.get("transport"):
+                            lines.append(f"    - 交通：{block.get('transport')}")
+                        if block.get("activity"):
+                            lines.append(f"    - 玩法：{block.get('activity')}")
+                        if block.get("food"):
+                            lines.append(f"    - 美食：{block.get('food')}")
+                        if block.get("note"):
+                            lines.append(f"    - 说明：{block.get('note')}")
+
         if stay:
             lines.extend(["", "## 酒店推荐"])
             if stay.get("summary"):
@@ -164,28 +229,6 @@ class TripDocumentService:
                     lines.append(f"- 房型摘要：{primary.get('房型摘要') or primary.get('room_summary')}")
                 if primary.get("预订链接") or primary.get("booking_url"):
                     lines.append(f"- 预订链接：{primary.get('预订链接') or primary.get('booking_url')}")
-
-        if daily_itinerary:
-            lines.extend(["", "## 每日行程"])
-            for day in daily_itinerary:
-                lines.extend(["", f"### Day {day.get('day_no')}: {day.get('title') or '当日安排'}"])
-                if day.get("summary"):
-                    lines.append(f"- 摘要：{day.get('summary')}")
-                if day.get("weather"):
-                    lines.append(f"- 天气：{day.get('weather')}")
-                for period in day.get("periods") or []:
-                    lines.append(f"- {period.get('label')}")
-                    for block in period.get("blocks") or []:
-                        title = block.get("title") or "行程安排"
-                        lines.append(f"  - {title}")
-                        if block.get("transport"):
-                            lines.append(f"    - 交通：{block.get('transport')}")
-                        if block.get("activity"):
-                            lines.append(f"    - 玩法：{block.get('activity')}")
-                        if block.get("food"):
-                            lines.append(f"    - 美食：{block.get('food')}")
-                        if block.get("note"):
-                            lines.append(f"    - 说明：{block.get('note')}")
 
         if food.get("summary"):
             lines.extend(["", "## 美食推荐", f"- {food.get('summary')}"])
@@ -289,6 +332,14 @@ class TripDocumentService:
         return fallback
 
     @classmethod
+    def _extract_map_preview(cls, structured_context: dict[str, Any]) -> dict[str, Any]:
+        amap = structured_context.get("amap")
+        if not isinstance(amap, dict):
+            return {}
+        preview = amap.get("map_preview")
+        return preview if isinstance(preview, dict) else {}
+
+    @classmethod
     def _extract_assistant_section(cls, structured_context: dict[str, Any], key: str) -> dict[str, Any]:
         assistant = structured_context.get("assistant_plan")
         if not isinstance(assistant, dict):
@@ -324,8 +375,23 @@ class TripDocumentService:
         }
 
     @classmethod
-    def _build_daily_itinerary(cls, trip, *, arrival: dict[str, Any], stay: dict[str, Any]) -> list[dict[str, Any]]:
+    def _build_daily_itinerary(
+        cls,
+        trip,
+        *,
+        arrival: dict[str, Any],
+        stay: dict[str, Any],
+        structured_context: dict[str, Any],
+    ) -> list[dict[str, Any]]:
         results: list[dict[str, Any]] = []
+        arrival_day = cls._build_arrival_day(
+            trip=trip,
+            arrival=arrival,
+            stay=stay,
+            structured_context=structured_context,
+        )
+        if arrival_day:
+            results.append(arrival_day)
         for day in getattr(trip, "itinerary_days", []) or []:
             items = [item for item in (getattr(day, "items", None) or []) if isinstance(item, dict)]
             periods: list[dict[str, Any]] = []
@@ -339,11 +405,10 @@ class TripDocumentService:
                             "blocks": blocks,
                         }
                     )
-            if getattr(day, "day_no", None) == 1:
-                periods = cls._inject_arrival_blocks(periods, arrival=arrival, stay=stay)
             results.append(
                 {
                     "day_no": getattr(day, "day_no", None),
+                    "day_type": "itinerary",
                     "title": getattr(day, "title", None),
                     "city_name": getattr(day, "city_name", None),
                     "summary": getattr(day, "summary", None),
@@ -354,52 +419,224 @@ class TripDocumentService:
         return results
 
     @classmethod
-    def _inject_arrival_blocks(
+    def _build_arrival_day(
         cls,
-        periods: list[dict[str, Any]],
         *,
+        trip,
         arrival: dict[str, Any],
         stay: dict[str, Any],
-    ) -> list[dict[str, Any]]:
+        structured_context: dict[str, Any],
+    ) -> dict[str, Any] | None:
         if not arrival:
-            return periods
+            return None
 
-        injected_periods = [dict(period) for period in periods]
-        morning_period = next(
-            (period for period in injected_periods if period.get("key") == "morning"),
-            None,
-        )
-        if morning_period is None:
-            morning_period = {"key": "morning", "label": cls.PERIOD_LABELS["morning"], "blocks": []}
-            injected_periods.insert(0, morning_period)
-
-        blocks = list(morning_period.get("blocks") or [])
         top_candidate = _first(arrival.get("candidates"))
         train_label = top_candidate.get("train_no") if isinstance(top_candidate, dict) else None
-        station_text = None
-        if isinstance(top_candidate, dict):
-            depart_station = _strip(top_candidate.get("depart_station"))
-            arrive_station = _strip(top_candidate.get("arrive_station"))
-            if depart_station or arrive_station:
-                station_text = f"{depart_station or '出发站待补充'} -> {arrive_station or '到达站待补充'}"
+        station_text = cls._format_arrival_station_text(top_candidate)
+        time_text = cls._format_arrival_time_text(top_candidate)
+        has_real_ticket = cls._has_real_arrival_ticket(arrival, top_candidate)
         arrival_note_parts = [
             _strip(arrival.get("summary")),
+            "暂未获取到真实车次，请以铁路12306官网/App为准。"
+            if not has_real_ticket
+            else "",
             f"推荐车次：{train_label}" if train_label else "",
             f"站点：{station_text}" if station_text else "",
+            f"发到时间：{time_text}" if time_text else "",
             f"票价参考：{arrival.get('price_text')}" if _strip(arrival.get("price_text")) else "",
+            f"余票参考：{top_candidate.get('availability_text')}"
+            if isinstance(top_candidate, dict) and _strip(top_candidate.get("availability_text"))
+            else "",
             f"12306提醒：{arrival.get('official_notice', {}).get('notice')}" if isinstance(arrival.get("official_notice"), dict) else "",
         ]
-        blocks.insert(
-            0,
+
+        summary = _strip(arrival.get("summary"))
+        if not summary:
+            destination = _strip(arrival.get("destination_city")) or "目的地"
+            origin = _strip(arrival.get("origin_city")) or "出发地"
+            if has_real_ticket and train_label:
+                summary = f"从 {origin} 前往 {destination}，推荐乘坐 {train_label} 抵达后衔接入住或首个景点。"
+            else:
+                summary = f"从 {origin} 前往 {destination}，当前按高铁/动车到达链路预留，暂未获取到真实车次。"
+        transfer_block = cls._build_arrival_transfer_block(
+            trip=trip,
+            arrival=arrival,
+            stay=stay,
+            structured_context=structured_context,
+            top_candidate=top_candidate,
+        )
+        transfer_summary = _strip(transfer_block.get("summary"))
+        if transfer_summary:
+            summary = f"{summary} {transfer_summary}".strip()
+
+        blocks = [
             {
                 "title": "跨城抵达",
                 "transport": cls._format_arrival_transport(arrival, top_candidate),
                 "activity": cls._format_arrival_activity(arrival, stay),
                 "note": "；".join(part for part in arrival_note_parts if part),
+            }
+        ]
+        if transfer_block:
+            blocks.append(
+                {
+                    "title": transfer_block.get("title") or "到站后衔接",
+                    "transport": transfer_block.get("transport"),
+                    "activity": transfer_block.get("activity"),
+                    "note": transfer_block.get("note"),
+                    "badge": transfer_block.get("badge") or "接驳",
+                }
+            )
+
+        return {
+            "day_no": 0,
+            "day_type": "arrival",
+            "title": "Day 0 到达日",
+            "city_name": _strip(arrival.get("destination_city")) or None,
+            "summary": summary,
+            "weather": None,
+            "arrival_leg": {
+                "transport": cls._format_arrival_transport(arrival, top_candidate),
+                "station_text": station_text,
+                "time_text": time_text,
+                "train_no": train_label,
             },
+            "transfer_to_stay_or_first_stop": transfer_block,
+            "official_notice": arrival.get("official_notice") if isinstance(arrival.get("official_notice"), dict) else {},
+            "periods": [
+                {
+                    "key": "morning",
+                    "label": cls.PERIOD_LABELS["morning"],
+                    "blocks": blocks,
+                }
+            ],
+        }
+
+    @classmethod
+    def _build_arrival_transfer_block(
+        cls,
+        *,
+        trip,
+        arrival: dict[str, Any],
+        stay: dict[str, Any],
+        structured_context: dict[str, Any],
+        top_candidate: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        stay_primary = _first(stay.get("items")) if isinstance(stay, dict) else None
+        stay_name = _strip(stay_primary.get("name")) if isinstance(stay_primary, dict) else ""
+        first_stop = cls._extract_first_itinerary_target(trip)
+        target_name = stay_name or first_stop or (_strip(arrival.get("destination_city")) or "酒店或首个景点")
+        route = cls._find_arrival_transfer_route(
+            structured_context=structured_context,
+            station_name=_strip(top_candidate.get("arrive_station")) if isinstance(top_candidate, dict) else "",
+            target_name=target_name,
         )
-        morning_period["blocks"] = blocks
-        return injected_periods
+        if route:
+            route_steps = cls._describe_route_steps(route)
+            summary = f"到站后优先前往 {target_name}，先完成落脚再开始当天安排。"
+            return {
+                "title": "到站后去酒店/首景点",
+                "badge": "接驳",
+                "summary": summary,
+                "transport": cls._format_transport_text(route),
+                "activity": (
+                    f"从 {_strip(route.get('from')) or _strip(top_candidate.get('arrive_station')) or '到达站'} "
+                    f"前往 {target_name}，建议先完成入住或放下行李。"
+                ),
+                "note": route_steps or "已根据现有路线结果整理首段接驳。",
+            }
+
+        if stay_name:
+            return {
+                "title": "到站后去酒店",
+                "badge": "接驳",
+                "summary": f"到站后先前往 {stay_name} 办理入住，再开始后续行程。",
+                "transport": "优先地铁/打车衔接，暂未获取到逐步路线",
+                "activity": f"到站后先前往 {stay_name}，完成入住、放行李后再去首个景点。",
+                "note": "暂未获取到站后细路线，可优先打车或按高德实时路线前往酒店。",
+            }
+
+        if first_stop:
+            return {
+                "title": "到站后去首个景点",
+                "badge": "接驳",
+                "summary": f"到站后直接前往 {first_stop} 开始当天行程。",
+                "transport": "优先地铁/公交衔接，暂未获取到逐步路线",
+                "activity": f"到站后直接前往 {first_stop}，建议先完成简单补给再开始游玩。",
+                "note": "暂未获取到站后细路线，可优先打车/地铁前往首个景点。",
+            }
+
+        return {
+            "title": "到站后衔接",
+            "badge": "接驳",
+            "summary": "到站后优先衔接酒店或首个景点。",
+            "transport": "优先打车或地铁，暂未获取到逐步路线",
+            "activity": "到站后先确认落脚点，再按当天节奏开始行程。",
+            "note": "暂未获取到站后细路线，可优先打车/地铁前往。",
+        }
+
+    @classmethod
+    def _find_arrival_transfer_route(
+        cls,
+        *,
+        structured_context: dict[str, Any],
+        station_name: str,
+        target_name: str,
+    ) -> dict[str, Any] | None:
+        amap = structured_context.get("amap")
+        if not isinstance(amap, dict):
+            return None
+        routes = amap.get("routes")
+        if not isinstance(routes, list):
+            return None
+
+        normalized_station = station_name.replace("站", "")
+        normalized_target = target_name.replace("站", "")
+        best_route = None
+        for route in routes:
+            if not isinstance(route, dict):
+                continue
+            route_kind = _strip(route.get("route_kind"))
+            if route_kind not in {"point_to_point", "city_to_city"}:
+                continue
+            origin = _strip(route.get("origin"))
+            destination = _strip(route.get("destination"))
+            if normalized_station and normalized_station not in origin.replace("站", ""):
+                continue
+            if normalized_target and normalized_target not in destination.replace("站", ""):
+                continue
+            best_route = route
+            break
+        return best_route
+
+    @staticmethod
+    def _extract_first_itinerary_target(trip) -> str:
+        itinerary_days = getattr(trip, "itinerary_days", []) or []
+        for day in itinerary_days:
+            for item in getattr(day, "items", []) or []:
+                if not isinstance(item, dict):
+                    continue
+                if item.get("type") == "spot_sequence":
+                    spots = [str(name).strip() for name in item.get("spot_sequence") or [] if _strip(name)]
+                    if spots:
+                        return spots[0]
+                if item.get("type") == "transit" and _strip(item.get("to")):
+                    return _strip(item.get("to"))
+        return ""
+
+    @staticmethod
+    def _describe_route_steps(route: dict[str, Any]) -> str:
+        steps = route.get("steps") or []
+        if not isinstance(steps, list) or not steps:
+            return ""
+        descriptions: list[str] = []
+        for step in steps[:3]:
+            if not isinstance(step, dict):
+                continue
+            instruction = _strip(step.get("instruction"))
+            if instruction:
+                descriptions.append(instruction)
+        return "；".join(descriptions)
 
     @staticmethod
     def _format_arrival_transport(arrival: dict[str, Any], candidate: dict[str, Any] | None) -> str:
@@ -417,6 +654,37 @@ class TripDocumentService:
         if _strip(arrival.get("duration_text")):
             parts.append(f"耗时 {arrival.get('duration_text')}")
         return "｜".join(part for part in parts if part) or "跨城到达方式待补充"
+
+    @staticmethod
+    def _format_arrival_station_text(candidate: dict[str, Any] | None) -> str:
+        if not isinstance(candidate, dict):
+            return ""
+        depart_station = _strip(candidate.get("depart_station"))
+        arrive_station = _strip(candidate.get("arrive_station"))
+        if depart_station or arrive_station:
+            return f"{depart_station or '出发站待补充'} -> {arrive_station or '到达站待补充'}"
+        return ""
+
+    @staticmethod
+    def _format_arrival_time_text(candidate: dict[str, Any] | None) -> str:
+        if not isinstance(candidate, dict):
+            return ""
+        depart_time = _strip(candidate.get("depart_time"))
+        arrive_time = _strip(candidate.get("arrive_time"))
+        if depart_time or arrive_time:
+            return f"{depart_time or '待补充'} -> {arrive_time or '待补充'}"
+        return ""
+
+    @staticmethod
+    def _has_real_arrival_ticket(arrival: dict[str, Any], candidate: dict[str, Any] | None) -> bool:
+        ticket_status = _strip(arrival.get("ticket_status")).lower()
+        data_source = _strip(arrival.get("data_source")).lower()
+        train_no = _strip(candidate.get("train_no")) if isinstance(candidate, dict) else ""
+        if ticket_status == "placeholder":
+            return False
+        if data_source == "placeholder":
+            return False
+        return bool(train_no)
 
     @staticmethod
     def _format_arrival_activity(arrival: dict[str, Any], stay: dict[str, Any]) -> str:

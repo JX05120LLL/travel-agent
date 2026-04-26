@@ -14,6 +14,7 @@ import sys
 import uuid
 from pathlib import Path
 from typing import Annotated
+from urllib.parse import quote
 
 import uvicorn
 from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request
@@ -421,6 +422,20 @@ def parse_optional_date(value: str | None):
     return datetime.strptime(value, "%Y-%m-%d").date()
 
 
+def build_download_headers(filename: str, ascii_fallback: str) -> dict[str, str]:
+    """构造兼容 UTF-8 文件名的下载响应头。"""
+    fallback = "".join(
+        char if 32 <= ord(char) < 127 and char not in {'"', "\\"} else "-"
+        for char in (ascii_fallback or "trip-export")
+    ).strip() or "trip-export"
+    encoded = quote(filename or fallback)
+    return {
+        "Content-Disposition": (
+            f'attachment; filename="{fallback}"; filename*=UTF-8\'\'{encoded}'
+        )
+    }
+
+
 def _raise_http_for_integration_error(exc: Exception) -> None:
     """统一映射第三方集成错误到 HTTP 状态码。"""
     if isinstance(exc, ServiceValidationError):
@@ -536,6 +551,7 @@ def _auto_sync_workspace_after_assistant_reply(
     recommendation_reasons = comparison_decision_payload.get("recommendation_reasons") or []
     external_governance = {
         "amap": external_call_guard.snapshot("amap"),
+        "amap_mcp": external_call_guard.snapshot("amap_mcp"),
         "fliggy_hotel": external_call_guard.snapshot("fliggy_hotel"),
         "railway12306": external_call_guard.snapshot("railway12306"),
     }
@@ -546,6 +562,7 @@ def _auto_sync_workspace_after_assistant_reply(
         else {}
     )
     delivery_payload = dict(synced_constraints.get("delivery_payload") or {}) if synced_constraints else {}
+    map_preview = dict(delivery_payload.get("map_preview") or {}) if delivery_payload else {}
     official_booking_notice = None
     booking_notices = delivery_payload.get("booking_notices")
     if isinstance(booking_notices, list):
@@ -579,6 +596,11 @@ def _auto_sync_workspace_after_assistant_reply(
             "hotel_price_status": price_confidence_summary.get("hotel_price_status"),
             "rail_ticket_status": price_confidence_summary.get("rail_ticket_status"),
             "official_booking_notice": official_booking_notice,
+            "map_preview_status": {
+                "provider_mode": map_preview.get("provider_mode"),
+                "has_personal_map": bool(map_preview.get("personal_map_url")),
+                "degraded_reason": map_preview.get("degraded_reason"),
+            },
         },
     )
 
@@ -602,6 +624,11 @@ def _auto_sync_workspace_after_assistant_reply(
         "hotel_price_status": price_confidence_summary.get("hotel_price_status"),
         "rail_ticket_status": price_confidence_summary.get("rail_ticket_status"),
         "official_booking_notice": official_booking_notice,
+        "map_preview_status": {
+            "provider_mode": map_preview.get("provider_mode"),
+            "has_personal_map": bool(map_preview.get("personal_map_url")),
+            "degraded_reason": map_preview.get("degraded_reason"),
+        },
     }
 
 
@@ -719,6 +746,9 @@ def serialize_plan_comparison(item) -> PlanComparisonSummaryResponse:
 def serialize_trip_summary(item) -> TripSummaryResponse:
     """把正式行程对象转换成摘要响应。"""
     constraints = getattr(item, "constraints", None) or {}
+    document_markdown = constraints.get("document_markdown")
+    if not document_markdown:
+        document_markdown = TripExportService().ensure_document_markdown(item)
     return TripSummaryResponse(
         id=str(item.id),
         title=item.title,
@@ -728,7 +758,7 @@ def serialize_trip_summary(item) -> TripSummaryResponse:
         summary=item.summary,
         structured_context=constraints.get("structured_context"),
         delivery_payload=constraints.get("delivery_payload"),
-        document_markdown=constraints.get("document_markdown"),
+        document_markdown=document_markdown,
         price_confidence_summary=constraints.get("price_confidence_summary"),
         source_plan_option_id=str(item.source_plan_option_id) if item.source_plan_option_id else None,
         selected_from_comparison_id=(
@@ -744,6 +774,9 @@ def serialize_trip_summary(item) -> TripSummaryResponse:
 def serialize_trip_detail(item) -> TripDetailResponse:
     """把正式行程对象转换成详情响应。"""
     constraints = getattr(item, "constraints", None) or {}
+    document_markdown = constraints.get("document_markdown")
+    if not document_markdown:
+        document_markdown = TripExportService().ensure_document_markdown(item)
     return TripDetailResponse(
         id=str(item.id),
         title=item.title,
@@ -754,7 +787,7 @@ def serialize_trip_detail(item) -> TripDetailResponse:
         plan_markdown=item.plan_markdown,
         structured_context=constraints.get("structured_context"),
         delivery_payload=constraints.get("delivery_payload"),
-        document_markdown=constraints.get("document_markdown"),
+        document_markdown=document_markdown,
         price_confidence_summary=constraints.get("price_confidence_summary"),
         source_plan_option_id=str(item.source_plan_option_id) if item.source_plan_option_id else None,
         selected_from_comparison_id=(
@@ -1769,7 +1802,7 @@ async def export_session_trip_markdown(
 
     markdown_text = export_service.ensure_document_markdown(trip)
     filename = export_service.build_markdown_filename(trip)
-    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    headers = build_download_headers(filename, "trip-export.md")
     return Response(
         content=markdown_text.encode("utf-8"),
         media_type="text/markdown; charset=utf-8",
@@ -1809,7 +1842,7 @@ async def export_session_trip_pdf(
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     filename = export_service.build_pdf_filename(trip)
-    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    headers = build_download_headers(filename, "trip-export.pdf")
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",

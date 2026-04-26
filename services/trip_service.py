@@ -615,7 +615,6 @@ class TripService:
                 "route",
                 "spot_route",
                 "stay_recommendations",
-                "arrival_recommendation",
             }:
                 pinned_day_one_cards.append(card_copy)
             elif card_type in {"budget_summary", "travel_notes", "planning_assumptions"}:
