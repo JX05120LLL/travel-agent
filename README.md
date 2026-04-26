@@ -239,31 +239,4 @@ venv\Scripts\python -m pytest tests/test_frontend_layout_contract.py -q
 
 ---
 
-## 文档索引
 
-建议按下面顺序阅读：
-
-1. [AI应用开发学习计划-基于TravelAgent项目](docs/AI应用开发学习计划-基于TravelAgent项目.md)
-2. [当前进度与决策](docs/当前进度与决策.md)
-3. [开发日志记录](docs/开发日志记录.md)
-4. [旅行规划Agent项目方案](docs/旅行规划Agent项目方案.md)
-5. [项目分层方案](docs/项目分层方案.md)
-6. [MCP服务接入方案](docs/MCP服务接入方案.md)
-7. [agent-session-memory-context-design](docs/agent-session-memory-context-design.md)
-
----
-
-## 当前建议
-
-如果你接下来准备边维护项目边系统学习，建议先看：
-
-- `agent/graph.py`
-- `agent/prompts.py`
-- `services/session_service.py`
-- `services/intent_router.py`
-- `services/memory_service.py`
-- `services/train_12306_service.py`
-- `services/amap_mcp_service.py`
-- `services/trip_document_service.py`
-
-这些模块基本覆盖了 AI 应用开发岗位里最核心的几个能力面：Prompt、Context、Tool、Provider、Memory、Recall、Orchestration、Delivery。
