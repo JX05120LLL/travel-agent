@@ -39,13 +39,13 @@ if "langchain_core.messages" not in sys.modules or "langchain_core.tools" not in
     sys.modules["langchain_core.tools"] = tools_module
 
 from db.models import ChatSession
-from services.intent_router import IntentRouter, SessionRouteResult
-from services.session_service import SessionService
+from services.chat.intent_router import IntentRouter, SessionRouteResult
+from services.session.session_service import SessionService
 
 
 class SessionServiceTests(unittest.TestCase):
-    @patch("services.intent_router.list_plan_options")
-    @patch("services.intent_router.get_active_plan_option")
+    @patch("services.chat.intent_router.list_plan_options")
+    @patch("services.chat.intent_router.get_active_plan_option")
     def test_intent_router_does_not_treat_descriptive_bijiao_as_plan_comparison(
         self,
         get_active_plan_option,
@@ -72,8 +72,8 @@ class SessionServiceTests(unittest.TestCase):
         self.assertEqual("create_new_option", route.action)
         self.assertFalse(route.needs_confirmation)
 
-    @patch("services.intent_router.list_plan_options")
-    @patch("services.intent_router.get_active_plan_option")
+    @patch("services.chat.intent_router.list_plan_options")
+    @patch("services.chat.intent_router.get_active_plan_option")
     def test_intent_router_still_recognizes_explicit_plan_comparison_request(
         self,
         get_active_plan_option,
@@ -97,8 +97,8 @@ class SessionServiceTests(unittest.TestCase):
 
         self.assertEqual("compare_options", route.action)
 
-    @patch("services.session_service.create_session_event")
-    @patch("services.session_service.get_active_plan_option")
+    @patch("services.session.session_service.create_session_event")
+    @patch("services.session.session_service.get_active_plan_option")
     def test_apply_user_input_attaches_recall_without_duplicate_extra_section(
         self,
         get_active_plan_option,
@@ -146,8 +146,8 @@ class SessionServiceTests(unittest.TestCase):
             commit=False,
         )
 
-    @patch("services.session_service.create_session_event")
-    @patch("services.session_service.get_active_plan_option")
+    @patch("services.session.session_service.create_session_event")
+    @patch("services.session.session_service.get_active_plan_option")
     def test_apply_user_input_adds_one_stop_planning_section_for_new_plan(
         self,
         get_active_plan_option,
@@ -192,9 +192,58 @@ class SessionServiceTests(unittest.TestCase):
             commit=False,
         )
 
-    @patch("services.session_service.create_session_event")
-    @patch("services.session_service.get_plan_option")
-    @patch("services.session_service.get_active_plan_option")
+    @patch("services.session.session_service.create_session_event")
+    @patch("services.session.session_service.get_active_plan_option")
+    def test_apply_user_input_adds_rail_only_section_for_ticket_query(
+        self,
+        get_active_plan_option,
+        create_session_event,
+    ):
+        get_active_plan_option.return_value = None
+        session = ChatSession(
+            id=uuid.uuid4(),
+            user_id=uuid.uuid4(),
+            title="查票",
+        )
+        route = SessionRouteResult(action="create_new_option", confidence=0.68)
+
+        service = SessionService(db=MagicMock())
+        service.memory_service = MagicMock()
+        service.plan_option_service = MagicMock()
+        service.plan_option_service.create_option.return_value = SimpleNamespace(
+            plan_option=SimpleNamespace(
+                id=uuid.uuid4(),
+                title="汉中到西安火车票",
+            )
+        )
+
+        result = service.apply_user_input(
+            session=session,
+            user_id=session.user_id,
+            user_input="帮我查一下明天汉中到西安的火车票",
+            route_result=route,
+        )
+
+        self.assertTrue(
+            any("【本轮工具边界】" in section for section in result.extra_sections)
+        )
+        rail_section = next(
+            section for section in result.extra_sections if "【本轮工具边界】" in section
+        )
+        self.assertIn("最多调用 plan_12306_arrival", rail_section)
+        self.assertIn("不要调用 get_weather", rail_section)
+        self.assertIn("retrieve_local_knowledge", rail_section)
+        self.assertFalse(
+            any("一条龙旅行规划" in section for section in result.extra_sections)
+        )
+        service.memory_service.refresh_session_memory.assert_called_once_with(
+            session=session,
+            commit=False,
+        )
+
+    @patch("services.session.session_service.create_session_event")
+    @patch("services.session.session_service.get_plan_option")
+    @patch("services.session.session_service.get_active_plan_option")
     def test_apply_user_input_does_not_add_one_stop_section_for_forwarding_request(
         self,
         get_active_plan_option,

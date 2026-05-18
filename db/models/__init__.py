@@ -7,6 +7,8 @@
 """
 
 from db.models.chat_session import ChatSession
+from db.models.external_conversation import ExternalConversation
+from db.models.external_identity import ExternalIdentity
 from db.models.history_recall_log import HistoryRecallLog
 from db.models.message import Message
 from db.models.plan_comparison import PlanComparison
@@ -22,6 +24,8 @@ from db.models.user_preference import UserPreference
 
 __all__ = [
     "ChatSession",
+    "ExternalConversation",
+    "ExternalIdentity",
     "HistoryRecallLog",
     "Message",
     "PlanComparison",

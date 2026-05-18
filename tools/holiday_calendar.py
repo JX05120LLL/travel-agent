@@ -56,7 +56,8 @@ def _build_headers() -> dict:
 
 def _fetch_json(url: str, *, params: dict | None = None) -> dict:
     """Call jiejiari api and return json."""
-    response = httpx.get(url, headers=_build_headers(), params=params, timeout=15)
+    timeout_seconds = float(os.getenv("HOLIDAY_TIMEOUT_SECONDS", "45") or "45")
+    response = httpx.get(url, headers=_build_headers(), params=params, timeout=timeout_seconds)
     response.raise_for_status()
     return response.json()
 

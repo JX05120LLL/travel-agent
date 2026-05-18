@@ -3,6 +3,7 @@ langchain
 langchain-openai
 langchain-community
 langgraph
+mcp
 
 # ── 工具依赖 ─────────────────────────────
 tavily-python           # 网络搜索
@@ -17,8 +18,8 @@ fastapi
 uvicorn
 jinja2
 python-multipart
-# python-jose
-# passlib
+python-jose
+passlib[bcrypt]
 sqlalchemy
 psycopg[binary]
 # redis

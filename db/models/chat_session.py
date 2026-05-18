@@ -69,6 +69,10 @@ class ChatSession(Base):
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     user: Mapped["User"] = relationship(back_populates="sessions")
+    external_conversations: Mapped[list["ExternalConversation"]] = relationship(
+        back_populates="session",
+        cascade="all, delete-orphan",
+    )
     messages: Mapped[list["Message"]] = relationship(
         back_populates="session",
         cascade="all, delete-orphan",

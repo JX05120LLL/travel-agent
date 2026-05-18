@@ -1,19 +1,21 @@
-"""业务服务层。
+"""按层分组后的服务包，而不是单层平铺目录。
 
-这里保持轻量，避免包级联导入导致循环依赖。
-需要具体服务时，请直接从对应模块导入。
+子包说明：
+- `services.core`：公共错误、熔断保护等横切能力
+- `services.chat`：聊天运行时、记忆、召回和单轮执行
+- `services.session`：会话生命周期和工作区管理
+- `services.travel`：旅行规划、Trip 和导出相关能力
+- `services.providers`：地图、酒店、12306 等外部能力编排
+- `services.channels`：OpenClaw 之类的渠道适配层
 """
 
 __all__ = [
-    "amap_service",
-    "comparison_service",
-    "errors",
-    "intent_router",
-    "memory_service",
-    "plan_option_service",
-    "session_management_service",
-    "session_service",
-    "session_workspace_service",
-    "trip_service",
-    "user_service",
+    "auth",
+    "core",
+    "chat",
+    "session",
+    "travel",
+    "providers",
+    "channels",
+    "integrations",
 ]

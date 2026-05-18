@@ -11,8 +11,8 @@ if "httpx" not in sys.modules:
     httpx_module.HTTPError = Exception
     sys.modules["httpx"] = httpx_module
 
-from services.errors import ServiceConfigError
-from services.hotel_service import (
+from services.core.errors import ServiceConfigError
+from services.providers.hotel_service import (
     AmapStayFallbackProvider,
     FliggyHotelProvider,
     HotelSearchQuery,
@@ -51,10 +51,10 @@ class _FakeAmapService:
             "items": [
                 {
                     "id": "stay-1",
-                    "name": "西湖湖畔酒店",
-                    "type": "酒店",
-                    "business_area": "西湖",
-                    "address": "西湖大道 1 号",
+                    "name": "瑗挎箹婀栫晹閰掑簵",
+                    "type": "閰掑簵",
+                    "business_area": "瑗挎箹",
+                    "address": "瑗挎箹澶ч亾 1 鍙?,
                     "distance_m": 900,
                     "rating": 4.8,
                     "resolved_price": 580,
@@ -71,15 +71,15 @@ class _FakeFliggyClient:
 
     def call(self, method, **biz_params):
         if method == "taobao.xhotel.city.get":
-            return {"cities": [{"city_code": "330100", "city_name": "杭州"}]}
+            return {"cities": [{"city_code": "330100", "city_name": "鏉窞"}]}
         if method == "taobao.xhotel.info.list.get":
             return {
                 "hotels": [
                     {
                         "shid": "1001",
-                        "name": "西湖湖畔酒店",
-                        "district": "西湖",
-                        "address": "西湖大道 1 号",
+                        "name": "瑗挎箹婀栫晹閰掑簵",
+                        "district": "瑗挎箹",
+                        "address": "瑗挎箹澶ч亾 1 鍙?,
                         "rating": "4.8",
                         "tel": "0571-12345678",
                         "longitude": "120.1",
@@ -92,9 +92,9 @@ class _FakeFliggyClient:
             return {
                 "rooms": [
                     {
-                        "room_name": "高级大床房",
+                        "room_name": "楂樼骇澶у簥鎴?,
                         "sale_price": "688",
-                        "cancel_desc": "可免费取消",
+                        "cancel_desc": "鍙厤璐瑰彇娑?,
                         "h5_booking_url": "https://example.com/book",
                     }
                 ]
@@ -119,9 +119,9 @@ class HotelServiceTests(unittest.TestCase):
         )
 
         result = service.search_candidates(
-            destination="杭州",
-            center="西湖",
-            city="杭州",
+            destination="鏉窞",
+            center="瑗挎箹",
+            city="鏉窞",
             radius=5000,
             limit=5,
         )
@@ -129,9 +129,9 @@ class HotelServiceTests(unittest.TestCase):
         self.assertEqual("amap_fallback", result.provider)
         self.assertEqual("reference", result.price_status)
         self.assertTrue(result.fallback_used)
-        self.assertEqual("西湖湖畔酒店", result.candidates[0].name)
+        self.assertEqual("瑗挎箹婀栫晹閰掑簵", result.candidates[0].name)
         self.assertEqual("amap_cost", result.candidates[0].price_source)
-        self.assertIn("美团", " ".join(result.notes))
+        self.assertIn("缇庡洟", " ".join(result.notes))
 
     def test_fliggy_provider_merges_official_price_with_amap_seed(self):
         fake_amap = _FakeAmapService()
@@ -142,9 +142,9 @@ class HotelServiceTests(unittest.TestCase):
 
         result = provider.search_candidates(
             HotelSearchQuery(
-                destination="杭州",
+                destination="鏉窞",
                 center="120.123,30.123",
-                city="杭州",
+                city="鏉窞",
                 radius=5000,
                 limit=3,
                 checkin_date="2026-05-01",
@@ -155,11 +155,11 @@ class HotelServiceTests(unittest.TestCase):
         self.assertEqual("fliggy", result.provider)
         self.assertEqual("quoted", result.price_status)
         self.assertEqual("1001:330100", result.candidates[0].id)
-        self.assertEqual("西湖湖畔酒店", result.candidates[0].name)
+        self.assertEqual("瑗挎箹婀栫晹閰掑簵", result.candidates[0].name)
         self.assertEqual("fliggy_search", result.candidates[0].price_source)
-        self.assertEqual("688 元/晚起", result.candidates[0].price_text)
+        self.assertEqual("688 鍏?鏅氳捣", result.candidates[0].price_text)
         self.assertIn("book?pid=mm_123", result.candidates[0].booking_url)
-        self.assertIn("飞猪价格与房态请以下单页", " ".join(result.notes))
+        self.assertIn("椋炵尓浠锋牸涓庢埧鎬佽浠ヤ笅鍗曢〉", " ".join(result.notes))
 
     def test_fliggy_quote_offer_returns_reference_when_city_code_missing(self):
         provider = FliggyHotelProvider(

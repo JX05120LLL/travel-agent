@@ -48,6 +48,14 @@ class User(Base):
     sessions: Mapped[list["ChatSession"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
+    external_identities: Mapped[list["ExternalIdentity"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+    external_conversations: Mapped[list["ExternalConversation"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
     messages: Mapped[list["Message"]] = relationship(back_populates="user")
     plan_options: Mapped[list["PlanOption"]] = relationship(back_populates="user")
     plan_comparisons: Mapped[list["PlanComparison"]] = relationship(

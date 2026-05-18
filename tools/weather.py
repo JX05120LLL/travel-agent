@@ -326,7 +326,8 @@ def _shift_same_season_to_next_year(start: date, end: date) -> tuple[date, date]
 
 def _fetch_json(url: str, *, headers: dict, params: dict) -> dict:
     """Simple HTTP helper for QWeather APIs."""
-    response = httpx.get(url, headers=headers, params=params, timeout=10)
+    timeout_seconds = float(os.getenv("QWEATHER_TIMEOUT_SECONDS", "45") or "45")
+    response = httpx.get(url, headers=headers, params=params, timeout=timeout_seconds)
     response.raise_for_status()
     return response.json()
 

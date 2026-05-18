@@ -239,4 +239,41 @@ venv\Scripts\python -m pytest tests/test_frontend_layout_contract.py -q
 
 ---
 
+## OpenClaw MCP Wrapper
+
+项目现在支持一个独立的 MCP wrapper 进程，适合用 OpenClaw / ClawBot 作为微信入口时接入。
+
+### 新增环境变量
+
+```env
+MCP_WRAPPER_HOST=0.0.0.0
+MCP_WRAPPER_PORT=7861
+MCP_WRAPPER_PATH=/mcp
+MCP_WRAPPER_AUTH_TOKEN=replace-with-your-token
+MCP_WRAPPER_CHANNEL=wechat_openclaw
+```
+
+### 启动 MCP Wrapper
+
+```powershell
+venv\Scripts\python -m mcp_wrapper.server
+```
+
+### OpenClaw 侧远程 MCP 注册示例
+
+```json
+{
+  "mcp": {
+    "servers": {
+      "travel-agent": {
+        "url": "http://127.0.0.1:7861/mcp",
+        "transport": "streamable-http",
+        "headers": {
+          "Authorization": "Bearer <token>"
+        }
+      }
+    }
+  }
+}
+```
 

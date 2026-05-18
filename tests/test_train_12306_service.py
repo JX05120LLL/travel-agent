@@ -12,8 +12,8 @@ if "httpx" not in sys.modules:
     httpx_module.Response = object
     sys.modules["httpx"] = httpx_module
 
-from services.errors import ServiceIntegrationError
-from services.train_12306_service import TuniuFreeApiProvider
+from services.core.errors import ServiceIntegrationError
+from services.providers.train_12306_service import TuniuFreeApiProvider
 
 
 class _FakeResponse:
@@ -36,13 +36,13 @@ class Train12306ServiceTests(unittest.TestCase):
                 "list": [
                     {
                         "station_train_code": "G7311",
-                        "from_station_name": "上海虹桥",
-                        "to_station_name": "杭州东",
+                        "from_station_name": "涓婃捣铏规ˉ",
+                        "to_station_name": "鏉窞涓?,
                         "start_time": "07:00",
                         "arrive_time": "08:08",
-                        "lishi": "1小时08分钟",
+                        "lishi": "1灏忔椂08鍒嗛挓",
                         "ticketPrice": "73",
-                        "ticketNum": "有票",
+                        "ticketNum": "鏈夌エ",
                     }
                 ]
             }
@@ -52,10 +52,10 @@ class Train12306ServiceTests(unittest.TestCase):
 
         self.assertEqual(1, len(candidates))
         self.assertEqual("G7311", candidates[0].train_no)
-        self.assertEqual("上海虹桥", candidates[0].depart_station)
-        self.assertEqual("杭州东", candidates[0].arrive_station)
+        self.assertEqual("涓婃捣铏规ˉ", candidates[0].depart_station)
+        self.assertEqual("鏉窞涓?, candidates[0].arrive_station)
         self.assertEqual("73", candidates[0].price_text)
-        self.assertEqual("有票", candidates[0].availability_text)
+        self.assertEqual("鏈夌エ", candidates[0].availability_text)
 
     def test_parse_json_response_rejects_html_anti_bot_page(self):
         provider = TuniuFreeApiProvider()

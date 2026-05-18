@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
@@ -12,7 +12,7 @@
   <script src="https://cdn.jsdelivr.net/npm/dompurify@3.2.6/dist/purify.min.js"></script>
 </head>
 <body>
-  <main class="app-shell">
+  <main class="app-shell" id="appShell">
     <section class="workspace-shell" id="workspaceShell">
       <aside class="session-panel" id="sessionPanel">
         <div class="session-panel-top">
@@ -66,7 +66,13 @@
               </div>
             </div>
           </div>
-
+          <div class="auth-user-bar" id="authUserBar">
+            <div class="auth-user-meta">
+              <span class="auth-user-label">当前用户</span>
+              <strong id="currentUsername">-</strong>
+            </div>
+            <button type="button" class="session-refresh-btn" id="logoutBtn">退出登录</button>
+          </div>
         </header>
 
         <div class="chat-stage chat-stage-dual">
@@ -139,10 +145,20 @@
     window.TRAVEL_AGENT_CONFIG = {
       chatEndpoint: "/chat",
       sessionsEndpoint: "/sessions",
-      planOptionsPath: "/plan-options"
+      planOptionsPath: "/plan-options",
+      registerEndpoint: "/auth/register",
+      loginEndpoint: "/auth/login",
+      meEndpoint: "/auth/me",
+      loginPage: "/login"
     };
+  </script>
+  <script>
+    if (!localStorage.getItem("travel_agent_access_token")) {
+      window.location.replace("/login");
+    }
   </script>
   <script src="{{ request.url_for('static', path='markdown.js') }}"></script>
   <script src="{{ request.url_for('static', path='app.js') }}"></script>
+  <script src="{{ request.url_for('static', path='app_auth_bridge.js') }}"></script>
 </body>
 </html>

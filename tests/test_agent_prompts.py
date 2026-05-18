@@ -16,6 +16,8 @@ class AgentPromptTests(unittest.TestCase):
         self.assertIn("plan_12306_arrival", prompt)
         self.assertIn("search_hotel_stays", prompt)
         self.assertIn("retrieve_local_knowledge", prompt)
+        self.assertIn("本轮最多调用 plan_12306_arrival", prompt)
+        self.assertIn("不要调用 get_weather、retrieve_local_knowledge", prompt)
         self.assertIn("当前日期：2026年04月23日", prompt)
 
 

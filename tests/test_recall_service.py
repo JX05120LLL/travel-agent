@@ -27,7 +27,7 @@ if "langchain_core.tools" not in sys.modules:
     sys.modules["langchain_core.tools"] = tools_module
 
 from db.models import UserPreference
-from services.recall_service import RecallService
+from services.chat.recall_service import RecallService
 
 
 def build_preference() -> UserPreference:
@@ -36,7 +36,7 @@ def build_preference() -> UserPreference:
         user_id=uuid.uuid4(),
         preference_category="budget",
         preference_key="level",
-        preference_value={"value": "economy", "label": "预算偏经济", "evidence": "预算有限"},
+        preference_value={"value": "economy", "label": "棰勭畻鍋忕粡娴?, "evidence": "棰勭畻鏈夐檺"},
         source="user_explicit",
         confidence=Decimal("0.92"),
         is_active=True,
@@ -67,15 +67,15 @@ class RecallServiceTests(unittest.TestCase):
     ):
         contains_holiday_keyword.return_value = True
         resolve_holiday_window.return_value = {
-            "holiday_name": "国庆节",
+            "holiday_name": "鍥藉簡鑺?,
             "start_date": "2026-10-01",
             "end_date": "2026-10-07",
             "off_day_ranges": [("2026-10-01", "2026-10-07")],
         }
         build_query_profile.return_value = SimpleNamespace(
-            cleaned_query="国庆北京",
-            query_tokens={"国庆", "北京"},
-            destinations=["北京"],
+            cleaned_query="鍥藉簡鍖椾含",
+            query_tokens={"鍥藉簡", "鍖椾含"},
+            destinations=["鍖椾含"],
             preference_identities=set(),
             preference_fact_map={},
             day_count=None,
@@ -95,7 +95,7 @@ class RecallServiceTests(unittest.TestCase):
         service = RecallService(db=MagicMock())
         service.search_history(
             user_id=uuid.uuid4(),
-            query_text="国庆去北京还有之前方案吗",
+            query_text="鍥藉簡鍘诲寳浜繕鏈変箣鍓嶆柟妗堝悧",
             session_id=uuid.uuid4(),
         )
 
@@ -122,25 +122,25 @@ class RecallServiceTests(unittest.TestCase):
 
         trip = SimpleNamespace(
             id=uuid.uuid4(),
-            title="成都亲子行程",
-            primary_destination="成都",
-            summary="成都亲子三日游",
-            plan_markdown="成都亲子三日游详细安排",
-            destinations=[SimpleNamespace(destination_name="成都")],
+            title="鎴愰兘浜插瓙琛岀▼",
+            primary_destination="鎴愰兘",
+            summary="鎴愰兘浜插瓙涓夋棩娓?,
+            plan_markdown="鎴愰兘浜插瓙涓夋棩娓歌缁嗗畨鎺?,
+            destinations=[SimpleNamespace(destination_name="鎴愰兘")],
         )
         option = SimpleNamespace(
             id=uuid.uuid4(),
-            title="成都备选方案",
-            primary_destination="成都",
-            summary="更偏美食和慢节奏",
-            plan_markdown="成都慢节奏方案",
+            title="鎴愰兘澶囬€夋柟妗?,
+            primary_destination="鎴愰兘",
+            summary="鏇村亸缇庨鍜屾參鑺傚",
+            plan_markdown="鎴愰兘鎱㈣妭濂忔柟妗?,
             preferences={"budget": {"level": "economy"}},
         )
         past_session = SimpleNamespace(
             id=uuid.uuid4(),
-            title="成都聊天记录",
-            summary="上次讨论过成都亲子路线",
-            latest_user_message="想找成都亲子轻松一点的安排",
+            title="鎴愰兘鑱婂ぉ璁板綍",
+            summary="涓婃璁ㄨ杩囨垚閮戒翰瀛愯矾绾?,
+            latest_user_message="鎯虫壘鎴愰兘浜插瓙杞绘澗涓€鐐圭殑瀹夋帓",
         )
 
         list_user_trips.return_value = [trip]
@@ -150,14 +150,14 @@ class RecallServiceTests(unittest.TestCase):
 
         def fake_score(*args, **kwargs):
             title = kwargs["candidate_texts"][0]
-            if title == "成都亲子行程":
-                return 0.91, ["目的地匹配:成都", "关键词重合:亲子"]
-            if title == "成都备选方案":
-                return 0.78, ["关键词重合:成都"]
-            if title == "成都聊天记录":
-                return 0.62, ["关键词重合:成都"]
+            if title == "鎴愰兘浜插瓙琛岀▼":
+                return 0.91, ["鐩殑鍦板尮閰?鎴愰兘", "鍏抽敭璇嶉噸鍚?浜插瓙"]
+            if title == "鎴愰兘澶囬€夋柟妗?:
+                return 0.78, ["鍏抽敭璇嶉噸鍚?鎴愰兘"]
+            if title == "鎴愰兘鑱婂ぉ璁板綍":
+                return 0.62, ["鍏抽敭璇嶉噸鍚?鎴愰兘"]
             if title == "budget":
-                return 0.72, ["偏好重合:budget.level"]
+                return 0.72, ["鍋忓ソ閲嶅悎:budget.level"]
             return 0.20, []
 
         score_recall_candidate.side_effect = fake_score
@@ -172,7 +172,7 @@ class RecallServiceTests(unittest.TestCase):
         service = RecallService(db=MagicMock())
         result = service.search_history(
             user_id=user_id,
-            query_text="还记得之前成都亲子且预算有限的安排吗",
+            query_text="杩樿寰椾箣鍓嶆垚閮戒翰瀛愪笖棰勭畻鏈夐檺鐨勫畨鎺掑悧",
             session_id=session_id,
         )
 
@@ -184,9 +184,9 @@ class RecallServiceTests(unittest.TestCase):
         self.assertTrue(result["grouped_matches"]["relevant_preferences"])
         self.assertTrue(result["grouped_matches"]["related_sessions"])
         self.assertTrue(result["decision_groups"]["adoptable"])
-        self.assertIn("强相关的正式行程 / 已成型历史方案", result["injection_section"])
-        self.assertIn("命中的相关长期偏好", result["injection_section"])
-        self.assertIn("若命中同一目的地、同一时间窗、同一偏好约束", result["injection_section"])
+        self.assertIn("寮虹浉鍏崇殑姝ｅ紡琛岀▼ / 宸叉垚鍨嬪巻鍙叉柟妗?, result["injection_section"])
+        self.assertIn("鍛戒腑鐨勭浉鍏抽暱鏈熷亸濂?, result["injection_section"])
+        self.assertIn("鑻ュ懡涓悓涓€鐩殑鍦般€佸悓涓€鏃堕棿绐椼€佸悓涓€鍋忓ソ绾︽潫", result["injection_section"])
 
         recall_log = add_history_recall_log.call_args.args[1]
         self.assertIn("grouped_matches", recall_log.recall_payload)

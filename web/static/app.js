@@ -1,10 +1,26 @@
 ﻿const { chatEndpoint, sessionsEndpoint, planOptionsPath } = window.TRAVEL_AGENT_CONFIG;
 const SESSION_STORAGE_KEY = "travel_agent_session_id";
+const { registerEndpoint, loginEndpoint, meEndpoint } = window.TRAVEL_AGENT_CONFIG;
+const ACCESS_TOKEN_STORAGE_KEY = "travel_agent_access_token";
 const markdownRenderer = window.TravelAgentMarkdown.createRenderer({
   markedLib: window.marked,
   domPurify: window.DOMPurify,
 });
 
+const authShell = document.getElementById("authShell");
+const appShell = document.getElementById("appShell");
+const authStatus = document.getElementById("authStatus");
+const loginForm = document.getElementById("loginForm");
+const registerForm = document.getElementById("registerForm");
+const loginUsernameInput = document.getElementById("loginUsername");
+const loginPasswordInput = document.getElementById("loginPassword");
+const registerUsernameInput = document.getElementById("registerUsername");
+const registerPasswordInput = document.getElementById("registerPassword");
+const loginSubmitBtn = document.getElementById("loginSubmitBtn");
+const registerSubmitBtn = document.getElementById("registerSubmitBtn");
+const authUserBar = document.getElementById("authUserBar");
+const currentUsername = document.getElementById("currentUsername");
+const logoutBtn = document.getElementById("logoutBtn");
 const chatScroll = document.getElementById("chatScroll");
 const messageList = document.getElementById("messageList");
 const welcomeCard = document.getElementById("welcomeCard");
@@ -62,6 +78,9 @@ let selectedComparisonPlanIds = new Set();
 let isReplyStreaming = false;
 let tripPanelPendingRefresh = false;
 let tripPanelBaselineSignature = "";
+let accessToken = localStorage.getItem(ACCESS_TOKEN_STORAGE_KEY) || "";
+let currentUser = null;
+let appInitialized = false;
 const SIDEBAR_WIDTH_STORAGE_KEY = "travel_agent_sidebar_width";
 const SIDEBAR_COLLAPSED_STORAGE_KEY = "travel_agent_sidebar_collapsed";
 const SIDEBAR_MIN_WIDTH = 260;
@@ -72,6 +91,280 @@ const SIDEBAR_PEEK_OPEN_DELAY = 36;
 const SIDEBAR_PEEK_CLOSE_DELAY = 140;
 let sidebarPeekOpenTimer = null;
 let sidebarPeekCloseTimer = null;
+const rawFetch = window.fetch.bind(window);
+
+function setAuthStatus(message, type = "info") {
+  if (!authStatus) {
+    return;
+  }
+  authStatus.textContent = message || "";
+  authStatus.classList.remove("is-error", "is-success");
+  if (type === "error") {
+    authStatus.classList.add("is-error");
+  } else if (type === "success") {
+    authStatus.classList.add("is-success");
+  }
+}
+
+
+function setAuthLoading(formType, loading) {
+  if (formType === "login" && loginSubmitBtn) {
+    loginSubmitBtn.disabled = loading;
+    loginSubmitBtn.textContent = loading ? "登录中..." : "登录";
+  }
+  if (formType === "register" && registerSubmitBtn) {
+    registerSubmitBtn.disabled = loading;
+    registerSubmitBtn.textContent = loading ? "注册中..." : "注册";
+  }
+}
+
+
+function updateAuthenticatedUi() {
+  if (authUserBar) {
+    authUserBar.classList.toggle("hidden", !currentUser);
+  }
+  if (currentUsername) {
+    currentUsername.textContent = currentUser?.username || "-";
+  }
+}
+
+
+function showAuthenticatedApp() {
+  authShell?.classList.add("hidden");
+  appShell?.classList.remove("hidden");
+  updateAuthenticatedUi();
+}
+
+
+function showAuthGate() {
+  appShell?.classList.add("hidden");
+  authShell?.classList.remove("hidden");
+  updateAuthenticatedUi();
+}
+
+
+function setAccessToken(token) {
+  accessToken = token || "";
+  if (accessToken) {
+    localStorage.setItem(ACCESS_TOKEN_STORAGE_KEY, accessToken);
+  } else {
+    localStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY);
+  }
+}
+
+
+function resetSessionScopedState() {
+  currentSessionId = "";
+  sessionItems = [];
+  planOptionItems = [];
+  comparisonItems = [];
+  tripItems = [];
+  preferenceItems = [];
+  eventItems = [];
+  recallItems = [];
+  checkpointItems = [];
+  memorySnapshot = null;
+  selectedComparisonPlanIds.clear();
+  clearConversation();
+  renderSessionList();
+  renderPlanOptions();
+  renderMemorySnapshot();
+  renderComparisons();
+  renderTrips();
+  renderCheckpoints();
+  renderEvents();
+  renderRecalls();
+  updateExportButtonsState();
+}
+
+
+function handleUnauthorized() {
+  setAccessToken("");
+  currentUser = null;
+  resetSessionScopedState();
+  showAuthGate();
+  setAuthStatus("登录状态已失效，请重新登录。", "error");
+  loginPasswordInput && (loginPasswordInput.value = "");
+  loginUsernameInput?.focus();
+}
+
+
+async function authorizedFetch(input, init = {}) {
+  const headers = new Headers(init.headers || {});
+  if (accessToken) {
+    headers.set("Authorization", `Bearer ${accessToken}`);
+  }
+
+  const response = await rawFetch(input, {
+    ...init,
+    headers,
+  });
+
+  if (response.status === 401) {
+    const requestUrl = typeof input === "string" ? input : (input?.url || "");
+    const isAuthEndpoint = requestUrl.startsWith(loginEndpoint) || requestUrl.startsWith(registerEndpoint);
+    if (!isAuthEndpoint) {
+      handleUnauthorized();
+    }
+  }
+  return response;
+}
+
+
+window.fetch = function patchedFetch(input, init) {
+  return authorizedFetch(input, init);
+};
+
+
+async function fetchAuthenticatedUser(token) {
+  if (!token) {
+    return null;
+  }
+
+  const response = await rawFetch(meEndpoint, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  if (response.status === 401) {
+    return null;
+  }
+  if (!response.ok) {
+    throw new Error(`校验登录状态失败：${response.status}`);
+  }
+  return response.json();
+}
+
+
+async function bootstrapAuthenticatedApp() {
+  showAuthenticatedApp();
+  if (appInitialized) {
+    await Promise.all([loadSessions(), loadSessionHistory(), loadPlanOptions(), refreshInsightPanels()]);
+    return;
+  }
+  appInitialized = true;
+  initSidebarResize();
+  autoResizeTextarea();
+  updateExportButtonsState();
+  await loadSessions();
+  await Promise.all([loadSessionHistory(), loadPlanOptions(), refreshInsightPanels()]);
+}
+
+
+async function handleLoginSubmit(event) {
+  event.preventDefault();
+  const username = loginUsernameInput?.value.trim() || "";
+  const password = loginPasswordInput?.value || "";
+  if (!username || !password) {
+    setAuthStatus("请输入用户名和密码。", "error");
+    return;
+  }
+
+  setAuthLoading("login", true);
+  setAuthStatus("");
+  try {
+    const response = await rawFetch(loginEndpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ username, password }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload.detail || `登录失败：${response.status}`);
+    }
+
+    setAccessToken(payload.access_token || "");
+    currentUser = payload.user || null;
+    loginPasswordInput.value = "";
+    setAuthStatus("");
+    await bootstrapAuthenticatedApp();
+  } catch (error) {
+    setAuthStatus(error.message || "登录失败，请重试。", "error");
+  } finally {
+    setAuthLoading("login", false);
+  }
+}
+
+
+async function handleRegisterSubmit(event) {
+  event.preventDefault();
+  const username = registerUsernameInput?.value.trim() || "";
+  const password = registerPasswordInput?.value || "";
+  if (!username || !password) {
+    setAuthStatus("请输入注册用户名和密码。", "error");
+    return;
+  }
+
+  setAuthLoading("register", true);
+  setAuthStatus("");
+  try {
+    const response = await rawFetch(registerEndpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ username, password }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload.detail || `注册失败：${response.status}`);
+    }
+
+    if (loginUsernameInput) {
+      loginUsernameInput.value = payload.username || username;
+    }
+    if (loginPasswordInput) {
+      loginPasswordInput.value = password;
+    }
+    if (registerPasswordInput) {
+      registerPasswordInput.value = "";
+    }
+    setAuthStatus("注册成功，请直接登录。", "success");
+  } catch (error) {
+    setAuthStatus(error.message || "注册失败，请重试。", "error");
+  } finally {
+    setAuthLoading("register", false);
+  }
+}
+
+
+function logoutCurrentUser() {
+  setAccessToken("");
+  currentUser = null;
+  resetSessionScopedState();
+  showAuthGate();
+  setAuthStatus("已退出登录。", "success");
+}
+
+
+async function initializeAuthentication() {
+  autoResizeTextarea();
+  updateExportButtonsState();
+
+  if (!accessToken) {
+    showAuthGate();
+    setAuthStatus("请先登录后再使用聊天与会话功能。");
+    return;
+  }
+
+  try {
+    const user = await fetchAuthenticatedUser(accessToken);
+    if (!user) {
+      handleUnauthorized();
+      return;
+    }
+    currentUser = user;
+    await bootstrapAuthenticatedApp();
+  } catch (error) {
+    setAccessToken("");
+    currentUser = null;
+    showAuthGate();
+    setAuthStatus(error.message || "登录状态校验失败，请重新登录。", "error");
+  }
+}
+
 
 function normalizeMarkdown(rawText) {
   return markdownRenderer.normalizeMarkdown(rawText);
@@ -3125,6 +3418,14 @@ async function loadSessions() {
     }
 
     sessionItems = await response.json();
+
+    if (currentSessionId) {
+      const currentExists = sessionItems.some((item) => item.id === currentSessionId);
+      if (!currentExists) {
+        saveCurrentSessionId("");
+      }
+    }
+
     renderSessionList();
 
     if (!currentSessionId && sessionItems.length > 0) {
@@ -3361,7 +3662,7 @@ messageInput.addEventListener("keydown", (event) => {
 composerForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const text = messageInput.value.trim();
-  if (!text || sendBtn.disabled) {
+  if (!currentUser || !text || sendBtn.disabled) {
     return;
   }
 
@@ -3384,10 +3685,10 @@ if (createTripBtn) {
 }
 createCheckpointBtn?.addEventListener("click", createCheckpoint);
 rewindCheckpointBtn?.addEventListener("click", rewindLatestCheckpoint);
+loginForm?.addEventListener("submit", handleLoginSubmit);
+registerForm?.addEventListener("submit", handleRegisterSubmit);
+logoutBtn?.addEventListener("click", logoutCurrentUser);
 
-autoResizeTextarea();
-updateExportButtonsState();
-initSidebarResize();
-loadSessions().then(() => Promise.all([loadSessionHistory(), loadPlanOptions(), refreshInsightPanels()]));
+initializeAuthentication();
 
 

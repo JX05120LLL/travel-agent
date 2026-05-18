@@ -1,5 +1,5 @@
-from services.amap_mcp_service import AmapMcpService
-from services.train_12306_service import (
+from services.providers.amap_mcp_service import AmapMcpService
+from services.providers.train_12306_service import (
     JisuApiTrainProvider,
     PlaceholderTrain12306Provider,
     RailTripQuery,
@@ -10,8 +10,8 @@ from services.train_12306_service import (
 class FakeAmapService:
     def geocode(self, *, address, city=None):
         locations = {
-            "杭州东站": "120.219375,30.291225",
-            "西湖": "120.143222,30.236064",
+            "鏉窞涓滅珯": "120.219375,30.291225",
+            "瑗挎箹": "120.143222,30.236064",
         }
         return {
             "primary": {
@@ -59,7 +59,7 @@ class FakeAmapMcpMarkerFallbackService(AmapMcpService):
     def _call_mcp_tool(self, tool_name, arguments):
         if tool_name == "maps_text_search":
             keyword = arguments.get("keywords")
-            if keyword == "上海虹桥站":
+            if keyword == "涓婃捣铏规ˉ绔?:
                 return {
                     "jsonrpc": "2.0",
                     "result": {
@@ -135,13 +135,13 @@ class FakeJisuProvider(JisuApiTrainProvider):
                 "list": [
                     {
                         "trainno": "G7501",
-                        "startstation": "上海虹桥",
-                        "endstation": "杭州东",
+                        "startstation": "涓婃捣铏规ˉ",
+                        "endstation": "鏉窞涓?,
                         "departuretime": "08:00",
                         "arrivaltime": "08:48",
-                        "costtime": "48分钟",
+                        "costtime": "48鍒嗛挓",
                         "price": "73",
-                        "remain": "有票",
+                        "remain": "鏈夌エ",
                     }
                 ]
             },
@@ -150,20 +150,20 @@ class FakeJisuProvider(JisuApiTrainProvider):
 
 def test_jisu_provider_normalizes_train_candidates():
     payload = FakeJisuProvider().search_trips(
-        RailTripQuery(origin_city="上海", destination_city="杭州", depart_date="2026-05-01")
+        RailTripQuery(origin_city="涓婃捣", destination_city="鏉窞", depart_date="2026-05-01")
     ).to_dict()
 
     assert payload["provider"] == "jisu_train_api"
     assert payload["candidates"][0]["train_no"] == "G7501"
-    assert payload["candidates"][0]["depart_station"] == "上海虹桥"
-    assert payload["candidates"][0]["arrive_station"] == "杭州东"
+    assert payload["candidates"][0]["depart_station"] == "涓婃捣铏规ˉ"
+    assert payload["candidates"][0]["arrive_station"] == "鏉窞涓?
     assert payload["official_notice"]["website_url"] == "https://www.12306.cn/"
 
 
 def test_train_service_falls_back_to_placeholder_without_keys():
     payload = Train12306Service(providers=[PlaceholderTrain12306Provider()]).plan_arrival(
-        origin_city="上海",
-        destination_city="杭州",
+        origin_city="涓婃捣",
+        destination_city="鏉窞",
         depart_date="2026-05-01",
     )
 
@@ -178,19 +178,19 @@ def test_amap_map_preview_falls_back_to_uri_links_without_mcp_key(monkeypatch):
     monkeypatch.delenv("AMAP_API_KEY", raising=False)
     service = AmapMcpService(amap_service=FakeAmapService())
 
-    payload = service.build_map_preview(title="杭州两日游", city="杭州", points="杭州东站 -> 西湖")
+    payload = service.build_map_preview(title="鏉窞涓ゆ棩娓?, city="鏉窞", points="鏉窞涓滅珯 -> 瑗挎箹")
 
     assert payload["provider_mode"] == "fallback_link"
-    assert payload["markers"][0]["name"] == "杭州杭州东站"
+    assert payload["markers"][0]["name"] == "鏉窞鏉窞涓滅珯"
     assert payload["navigation_url"].startswith("https://uri.amap.com/navigation")
     assert payload["official_map_url"].startswith("https://uri.amap.com/marker")
 
 
 def test_amap_map_preview_extracts_personal_map_url_from_nested_text_payload():
     payload = FakeAmapMcpService().build_map_preview(
-        title="杭州两日游",
-        city="杭州",
-        points="杭州东站 -> 西湖",
+        title="鏉窞涓ゆ棩娓?,
+        city="鏉窞",
+        points="鏉窞涓滅珯 -> 瑗挎箹",
     )
 
     assert payload["provider_mode"] == "mcp"

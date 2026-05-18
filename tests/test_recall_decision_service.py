@@ -24,7 +24,7 @@ if "langchain_core.tools" not in sys.modules:
     sys.modules["langchain_core"] = langchain_core
     sys.modules["langchain_core.tools"] = tools_module
 
-from services.recall_service import RecallService
+from services.chat.recall_service import RecallService
 
 
 class RecallDecisionServiceTests(unittest.TestCase):
@@ -47,11 +47,11 @@ class RecallDecisionServiceTests(unittest.TestCase):
         session_id = uuid.uuid4()
         trip = SimpleNamespace(
             id=uuid.uuid4(),
-            title="国庆北京历史行程",
-            primary_destination="北京",
-            summary="国庆北京 4 天方案",
-            plan_markdown="国庆北京 4 天方案",
-            destinations=[SimpleNamespace(destination_name="北京")],
+            title="鍥藉簡鍖椾含鍘嗗彶琛岀▼",
+            primary_destination="鍖椾含",
+            summary="鍥藉簡鍖椾含 4 澶╂柟妗?,
+            plan_markdown="鍥藉簡鍖椾含 4 澶╂柟妗?,
+            destinations=[SimpleNamespace(destination_name="鍖椾含")],
             preferences={},
             total_days=4,
             travel_start_date=None,
@@ -63,14 +63,14 @@ class RecallDecisionServiceTests(unittest.TestCase):
         list_preferences.return_value = []
         score_recall_candidate.return_value = (
             0.82,
-            ["目的地匹配:北京", "偏好冲突:budget.level"],
+            ["鐩殑鍦板尮閰?鍖椾含", "鍋忓ソ鍐茬獊:budget.level"],
         )
         add_history_recall_log.side_effect = lambda db, log: log
 
         service = RecallService(db=MagicMock())
         result = service.search_history(
             user_id=user_id,
-            query_text="帮我找北京方案，但这次预算尽量省钱",
+            query_text="甯垜鎵惧寳浜柟妗堬紝浣嗚繖娆￠绠楀敖閲忕渷閽?,
             session_id=session_id,
         )
 
@@ -78,7 +78,7 @@ class RecallDecisionServiceTests(unittest.TestCase):
         blocked_item = result["decision_groups"]["blocked"][0]
         self.assertEqual("blocked", blocked_item["adoption_level"])
         self.assertTrue(blocked_item["blocking_reasons"])
-        self.assertIn("暂不直接沿用", result["decision_summary"])
+        self.assertIn("鏆備笉鐩存帴娌跨敤", result["decision_summary"])
 
 
 if __name__ == "__main__":

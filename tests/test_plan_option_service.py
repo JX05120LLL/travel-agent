@@ -30,7 +30,7 @@ if "langchain_core.messages" not in sys.modules:
     sys.modules["langchain_core.messages"] = messages_module
 
 from db.models import ChatSession
-from services.plan_option_service import PlanOptionService
+from services.travel.plan_option_service import PlanOptionService
 
 
 class PlanOptionServiceTests(unittest.TestCase):
@@ -46,39 +46,39 @@ class PlanOptionServiceTests(unittest.TestCase):
         session = ChatSession(
             id=uuid.uuid4(),
             user_id=uuid.uuid4(),
-            title="杭州工作区",
+            title="鏉窞宸ヤ綔鍖?,
             status="active",
         )
         latest_assistant = SimpleNamespace(
             id=uuid.uuid4(),
             content="\n".join(
                 [
-                    "## 杭州两日慢游",
-                    "先逛西湖，再去河坊街。",
-                    "### 预算汇总",
-                    "- 人均约 1200-1500 元",
-                    "### 注意事项",
-                    "- 西湖热门时段建议提前出发",
+                    "## 鏉窞涓ゆ棩鎱㈡父",
+                    "鍏堥€涜タ婀栵紝鍐嶅幓娌冲潑琛椼€?,
+                    "### 棰勭畻姹囨€?,
+                    "- 浜哄潎绾?1200-1500 鍏?,
+                    "### 娉ㄦ剰浜嬮」",
+                    "- 瑗挎箹鐑棬鏃舵寤鸿鎻愬墠鍑哄彂",
                 ]
             ),
             message_metadata={
                 "tool_outputs": [
                     "\n".join(
                         [
-                            "## 景点串联路线",
-                            "- 城市：杭州",
-                            "- 出行方式：驾车",
-                            "- 景点顺序：西湖 -> 河坊街",
+                            "## 鏅偣涓茶仈璺嚎",
+                            "- 鍩庡競锛氭澀宸?,
+                            "- 鍑鸿鏂瑰紡锛氶┚杞?,
+                            "- 鏅偣椤哄簭锛氳タ婀?-> 娌冲潑琛?,
                             "",
-                            "### 分段明细",
-                            "| 段落 | 起点 | 终点 | 距离 | 耗时 |",
+                            "### 鍒嗘鏄庣粏",
+                            "| 娈佃惤 | 璧风偣 | 缁堢偣 | 璺濈 | 鑰楁椂 |",
                             "| --- | --- | --- | --- | --- |",
-                            "| 1 | 西湖 | 河坊街 | 5.2 km | 18分钟 |",
+                            "| 1 | 瑗挎箹 | 娌冲潑琛?| 5.2 km | 18鍒嗛挓 |",
                             "",
-                            "### 总体估算",
-                            "- 总距离：5.2 km",
-                            "- 总耗时：18分钟",
-                            "- 说明：这是分段通勤总和，未包含景点停留时间。",
+                            "### 鎬讳綋浼扮畻",
+                            "- 鎬昏窛绂伙細5.2 km",
+                            "- 鎬昏€楁椂锛?8鍒嗛挓",
+                            "- 璇存槑锛氳繖鏄垎娈甸€氬嫟鎬诲拰锛屾湭鍖呭惈鏅偣鍋滅暀鏃堕棿銆?,
                         ]
                     )
                 ]
@@ -89,10 +89,10 @@ class PlanOptionServiceTests(unittest.TestCase):
         list_plan_options.return_value = []
         extract_candidate_plan_blocks.return_value = [
             {
-                "title": "杭州两日慢游",
-                "summary": "围绕西湖与河坊街展开的两日方案。",
-                "plan_markdown": "## 杭州两日慢游\n先逛西湖，再去河坊街。",
-                "primary_destination": "杭州",
+                "title": "鏉窞涓ゆ棩鎱㈡父",
+                "summary": "鍥寸粫瑗挎箹涓庢渤鍧婅灞曞紑鐨勪袱鏃ユ柟妗堛€?,
+                "plan_markdown": "## 鏉窞涓ゆ棩鎱㈡父\n鍏堥€涜タ婀栵紝鍐嶅幓娌冲潑琛椼€?,
+                "primary_destination": "鏉窞",
             }
         ]
 
@@ -117,7 +117,7 @@ class PlanOptionServiceTests(unittest.TestCase):
         self.assertEqual("spot_route", structured_context["amap"]["cards"][0]["type"])
         self.assertEqual("budget_summary", structured_context["assistant_plan"]["cards"][0]["type"])
         self.assertEqual(
-            ["西湖", "河坊街"],
+            ["瑗挎箹", "娌冲潑琛?],
             structured_context["amap"]["routes"][0]["spot_sequence"],
         )
         self.assertEqual(

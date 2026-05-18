@@ -4,7 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from db.models import UserPreference
-from services.preference_service import PreferenceService
+from services.chat.preference_service import PreferenceService
 
 
 def build_preference(
@@ -34,13 +34,13 @@ class PreferenceServiceTests(unittest.TestCase):
         long_term_preference = build_preference(
             category="budget",
             key="level",
-            label="预算中等",
+            label="棰勭畻涓瓑",
             confidence="0.91",
         )
 
         context = service.build_injection_context(
             preferences=[long_term_preference],
-            current_input="这次预算有限，尽量省钱",
+            current_input="杩欐棰勭畻鏈夐檺锛屽敖閲忕渷閽?,
         )
 
         self.assertEqual(1, len(context["current_explicit"]))
@@ -51,9 +51,9 @@ class PreferenceServiceTests(unittest.TestCase):
         self.assertEqual(1, len(context["suppressed_conflicts"]))
         self.assertEqual(0, len(context["stable_preferences"]))
         self.assertEqual(0, len(context["flexible_preferences"]))
-        self.assertIn("本轮用户明确提出的新偏好", context["summary"])
-        self.assertIn("预算偏经济", context["summary"])
-        self.assertIn("以下长期偏好与本轮输入冲突", context["summary"])
+        self.assertIn("鏈疆鐢ㄦ埛鏄庣‘鎻愬嚭鐨勬柊鍋忓ソ", context["summary"])
+        self.assertIn("棰勭畻鍋忕粡娴?, context["summary"])
+        self.assertIn("浠ヤ笅闀挎湡鍋忓ソ涓庢湰杞緭鍏ュ啿绐?, context["summary"])
 
 
 if __name__ == "__main__":

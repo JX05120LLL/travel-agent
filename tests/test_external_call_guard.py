@@ -1,7 +1,7 @@
 import unittest
 
-from services.errors import ServiceIntegrationError
-from services.external_call_guard import ExternalCallGuard, ExternalCallPolicy
+from services.core.errors import ServiceIntegrationError
+from services.core.external_call_guard import ExternalCallGuard, ExternalCallPolicy
 
 
 class ExternalCallGuardTests(unittest.TestCase):
@@ -18,8 +18,8 @@ class ExternalCallGuardTests(unittest.TestCase):
             call_count["value"] += 1
             return {"result": call_count["value"]}
 
-        first = guard.execute(policy=policy, func=func, cache_key="杭州西湖")
-        second = guard.execute(policy=policy, func=func, cache_key="杭州西湖")
+        first = guard.execute(policy=policy, func=func, cache_key="鏉窞瑗挎箹")
+        second = guard.execute(policy=policy, func=func, cache_key="鏉窞瑗挎箹")
 
         self.assertEqual({"result": 1}, first)
         self.assertEqual({"result": 1}, second)
@@ -44,7 +44,7 @@ class ExternalCallGuardTests(unittest.TestCase):
         )
 
         self.assertEqual({"ok": True}, first)
-        self.assertIn("限流", second["degraded"])
+        self.assertIn("闄愭祦", second["degraded"])
         snapshot = guard.snapshot("railway12306")
         self.assertEqual("rate_limited", snapshot["railway12306:arrival_plan"]["last_degraded_reason"])
 
@@ -58,7 +58,7 @@ class ExternalCallGuardTests(unittest.TestCase):
         )
 
         def failing():
-            raise ServiceIntegrationError("上游失败")
+            raise ServiceIntegrationError("涓婃父澶辫触")
 
         with self.assertRaises(ServiceIntegrationError):
             guard.execute(policy=policy, func=failing)

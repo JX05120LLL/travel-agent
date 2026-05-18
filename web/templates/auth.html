@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ page_title }}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ request.url_for('static', path='app.css') }}">
+</head>
+<body>
+  <section class="auth-shell">
+    <div class="auth-card auth-card-single">
+      <div class="auth-card-copy">
+        <p class="auth-kicker">Travel-Agent</p>
+        <h1>{{ headline }}</h1>
+        <p class="auth-text">{{ subtitle }}</p>
+        <div class="auth-status" id="authStatus"></div>
+      </div>
+
+      <div class="auth-form-grid auth-form-grid-single">
+        {% if mode == "login" %}
+        <form class="auth-form" id="loginForm">
+          <h2>登录</h2>
+          <label class="auth-field">
+            <span>用户名</span>
+            <input type="text" id="loginUsername" autocomplete="username" required>
+          </label>
+          <label class="auth-field">
+            <span>密码</span>
+            <input type="password" id="loginPassword" autocomplete="current-password" required>
+          </label>
+          <button type="submit" class="auth-submit-btn" id="loginSubmitBtn">登录</button>
+          <p class="auth-footnote">
+            还没有账号？
+            <a href="/register">去注册</a>
+          </p>
+        </form>
+        {% else %}
+        <form class="auth-form auth-form-muted" id="registerForm">
+          <h2>注册</h2>
+          <label class="auth-field">
+            <span>用户名</span>
+            <input type="text" id="registerUsername" autocomplete="username" required>
+          </label>
+          <label class="auth-field">
+            <span>密码</span>
+            <input type="password" id="registerPassword" autocomplete="new-password" required>
+          </label>
+          <button type="submit" class="auth-submit-btn auth-submit-btn-secondary" id="registerSubmitBtn">注册</button>
+          <p class="auth-footnote">
+            已有账号？
+            <a href="/login">去登录</a>
+          </p>
+        </form>
+        {% endif %}
+      </div>
+    </div>
+  </section>
+
+  <script>
+    window.TRAVEL_AGENT_AUTH_CONFIG = {
+      mode: "{{ mode }}",
+      registerEndpoint: "/auth/register",
+      loginEndpoint: "/auth/login",
+      meEndpoint: "/auth/me",
+      appPage: "/",
+      loginPage: "/login"
+    };
+  </script>
+  <script src="{{ request.url_for('static', path='auth.js') }}"></script>
+</body>
+</html>

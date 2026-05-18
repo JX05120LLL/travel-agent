@@ -1,52 +1,52 @@
 import unittest
 from types import SimpleNamespace
 
-from services.trip_document_service import TripDocumentService
+from services.travel.trip_document_service import TripDocumentService
 
 
 class TripDocumentServiceTests(unittest.TestCase):
     def test_builds_delivery_payload_and_markdown(self):
         trip = SimpleNamespace(
-            title="杭州两天轻松游",
-            summary="包含高铁、酒店、景点与美食的一条龙行程。",
-            primary_destination="杭州",
+            title="鏉窞涓ゅぉ杞绘澗娓?,
+            summary="鍖呭惈楂橀搧銆侀厭搴椼€佹櫙鐐逛笌缇庨鐨勪竴鏉￠緳琛岀▼銆?,
+            primary_destination="鏉窞",
             total_days=2,
             status="confirmed",
             itinerary_days=[
                 SimpleNamespace(
                     day_no=1,
-                    title="第 1 天安排",
-                    city_name="杭州",
-                    summary="当日景点动线：西湖 -> 河坊街",
+                    title="绗?1 澶╁畨鎺?,
+                    city_name="鏉窞",
+                    summary="褰撴棩鏅偣鍔ㄧ嚎锛氳タ婀?-> 娌冲潑琛?,
                     items=[
                         {
                             "type": "spot_sequence",
-                            "spot_sequence": ["西湖", "河坊街"],
-                            "optimization_note": "已启用固定首点优化",
+                            "spot_sequence": ["瑗挎箹", "娌冲潑琛?],
+                            "optimization_note": "宸插惎鐢ㄥ浐瀹氶鐐逛紭鍖?,
                             "time_period": "morning",
                         },
                         {
                             "type": "transit",
-                            "from": "西湖",
-                            "to": "河坊街",
-                            "mode": "公交/地铁",
+                            "from": "瑗挎箹",
+                            "to": "娌冲潑琛?,
+                            "mode": "鍏氦/鍦伴搧",
                             "distance_text": "2.3 km",
-                            "duration_text": "24分钟",
-                            "ticket_cost_text": "3 元",
+                            "duration_text": "24鍒嗛挓",
+                            "ticket_cost_text": "3 鍏?,
                             "route_kind": "spot_leg",
                             "step_details": [
                                 {
-                                    "instruction": "乘坐 地铁1号线，从龙翔桥站到定安路站",
-                                    "line": "地铁1号线",
-                                    "departure_stop": "龙翔桥站",
-                                    "arrival_stop": "定安路站",
+                                    "instruction": "涔樺潗 鍦伴搧1鍙风嚎锛屼粠榫欑繑妗ョ珯鍒板畾瀹夎矾绔?,
+                                    "line": "鍦伴搧1鍙风嚎",
+                                    "departure_stop": "榫欑繑妗ョ珯",
+                                    "arrival_stop": "瀹氬畨璺珯",
                                 }
                             ],
                             "time_period": "afternoon",
                         },
                         {
                             "type": "food_recommendations",
-                            "items": [{"name": "知味观"}],
+                            "items": [{"name": "鐭ュ懗瑙?}],
                             "time_period": "evening",
                         },
                     ],
@@ -57,16 +57,16 @@ class TripDocumentServiceTests(unittest.TestCase):
             "railway12306": {
                 "arrivals": [
                     {
-                        "origin_city": "上海",
-                        "destination_city": "杭州",
-                        "recommended_mode": "高铁/动车",
-                        "duration_text": "1小时08分钟",
-                        "price_text": "73 元起",
-                        "summary": "优先高铁到达杭州东站。",
+                        "origin_city": "涓婃捣",
+                        "destination_city": "鏉窞",
+                        "recommended_mode": "楂橀搧/鍔ㄨ溅",
+                        "duration_text": "1灏忔椂08鍒嗛挓",
+                        "price_text": "73 鍏冭捣",
+                        "summary": "浼樺厛楂橀搧鍒拌揪鏉窞涓滅珯銆?,
                         "ticket_status": "reference",
                         "data_source": "placeholder",
-                        "official_notice": {"notice": "请以铁路12306官网/App为准。"},
-                        "candidates": [{"train_no": "G7311", "depart_station": "上海虹桥", "arrive_station": "杭州东"}],
+                        "official_notice": {"notice": "璇蜂互閾佽矾12306瀹樼綉/App涓哄噯銆?},
+                        "candidates": [{"train_no": "G7311", "depart_station": "涓婃捣铏规ˉ", "arrive_station": "鏉窞涓?}],
                     }
                 ]
             },
@@ -74,35 +74,35 @@ class TripDocumentServiceTests(unittest.TestCase):
                 "routes": [
                     {
                         "route_kind": "point_to_point",
-                        "origin": "杭州东站",
-                        "destination": "湖畔酒店",
-                        "mode": "地铁/步行",
+                        "origin": "鏉窞涓滅珯",
+                        "destination": "婀栫晹閰掑簵",
+                        "mode": "鍦伴搧/姝ヨ",
                         "distance_text": "8.4 km",
-                        "duration_text": "32分钟",
-                        "ticket_cost_text": "4 元",
+                        "duration_text": "32鍒嗛挓",
+                        "ticket_cost_text": "4 鍏?,
                         "steps": [
                             {
-                                "instruction": "从杭州东站乘地铁 1 号线前往龙翔桥站。",
-                                "line": "地铁 1 号线",
-                                "departure_stop": "杭州东站",
-                                "arrival_stop": "龙翔桥站",
+                                "instruction": "浠庢澀宸炰笢绔欎箻鍦伴搧 1 鍙风嚎鍓嶅線榫欑繑妗ョ珯銆?,
+                                "line": "鍦伴搧 1 鍙风嚎",
+                                "departure_stop": "鏉窞涓滅珯",
+                                "arrival_stop": "榫欑繑妗ョ珯",
                             },
                             {
-                                "instruction": "出站后步行约 600 米到达湖畔酒店。",
-                                "distance_text": "600 米",
-                                "duration_text": "9 分钟",
+                                "instruction": "鍑虹珯鍚庢琛岀害 600 绫冲埌杈炬箹鐣旈厭搴椼€?,
+                                "distance_text": "600 绫?,
+                                "duration_text": "9 鍒嗛挓",
                             },
                         ],
                     }
                 ],
                 "map_preview": {
                     "provider_mode": "mcp",
-                    "title": "杭州两天地图预览",
-                    "city": "杭州",
+                    "title": "鏉窞涓ゅぉ鍦板浘棰勮",
+                    "city": "鏉窞",
                     "center": "120.143222,30.236064",
                     "markers": [
-                        {"name": "杭州东站", "location": "120.219375,30.291225"},
-                        {"name": "西湖", "location": "120.143222,30.236064"},
+                        {"name": "鏉窞涓滅珯", "location": "120.219375,30.291225"},
+                        {"name": "瑗挎箹", "location": "120.143222,30.236064"},
                     ],
                     "personal_map_url": "https://example.com/personal-map",
                     "personal_map_open_url": "https://example.com/personal-map",
@@ -114,25 +114,25 @@ class TripDocumentServiceTests(unittest.TestCase):
             "hotel_accommodation": {
                 "searches": [
                     {
-                        "summary": "湖畔酒店，580 元/晚起，amap_cost，西湖",
+                        "summary": "婀栫晹閰掑簵锛?80 鍏?鏅氳捣锛宎map_cost锛岃タ婀?,
                         "price_status": "reference",
                         "items": [
                             {
-                                "name": "湖畔酒店",
-                                "片区": "西湖",
-                                "价格": "580 元/晚起",
-                                "价格来源": "amap_cost",
+                                "name": "婀栫晹閰掑簵",
+                                "鐗囧尯": "瑗挎箹",
+                                "浠锋牸": "580 鍏?鏅氳捣",
+                                "浠锋牸鏉ユ簮": "amap_cost",
                             }
                         ],
-                        "notes": ["价格与房态请以下单页为准。"],
+                        "notes": ["浠锋牸涓庢埧鎬佽浠ヤ笅鍗曢〉涓哄噯銆?],
                     }
                 ]
             },
             "assistant_plan": {
-                "budget": {"summary": "人均约 1500-1900 元", "items": ["酒店 580 元/晚"]},
-                "notes": {"summary": "已整理出行注意事项", "items": ["五一需提前预约热门景点"]},
-                "assumptions": {"summary": "本轮规划使用了默认假设", "items": ["默认两天一晚"]},
-                "reasons": {"summary": "已整理本次推荐理由", "items": ["交通衔接更顺"]},
+                "budget": {"summary": "浜哄潎绾?1500-1900 鍏?, "items": ["閰掑簵 580 鍏?鏅?]},
+                "notes": {"summary": "宸叉暣鐞嗗嚭琛屾敞鎰忎簨椤?, "items": ["浜斾竴闇€鎻愬墠棰勭害鐑棬鏅偣"]},
+                "assumptions": {"summary": "鏈疆瑙勫垝浣跨敤浜嗛粯璁ゅ亣璁?, "items": ["榛樿涓ゅぉ涓€鏅?]},
+                "reasons": {"summary": "宸叉暣鐞嗘湰娆℃帹鑽愮悊鐢?, "items": ["浜ら€氳鎺ユ洿椤?]},
             },
         }
 
@@ -140,33 +140,33 @@ class TripDocumentServiceTests(unittest.TestCase):
         markdown = TripDocumentService.build_document_markdown(payload)
         confidence = TripDocumentService.build_price_confidence_summary(payload)
 
-        self.assertEqual("杭州两天轻松游", payload["overview"]["title"])
+        self.assertEqual("鏉窞涓ゅぉ杞绘澗娓?, payload["overview"]["title"])
         self.assertEqual("reference", payload["stay"]["price_status"])
         self.assertEqual("reference", confidence["rail_ticket_status"])
         self.assertEqual("arrival", payload["daily_itinerary"][0]["day_type"])
-        self.assertEqual("Day 0 到达日", payload["daily_itinerary"][0]["title"])
+        self.assertEqual("Day 0 鍒拌揪鏃?, payload["daily_itinerary"][0]["title"])
         self.assertIn("transfer_to_stay_or_first_stop", payload["daily_itinerary"][0])
         self.assertIn(
-            "地铁/步行",
+            "鍦伴搧/姝ヨ",
             payload["daily_itinerary"][0]["transfer_to_stay_or_first_stop"]["transport"],
         )
-        self.assertEqual("杭州两天地图预览", payload["map_preview"]["title"])
-        self.assertIn("酒店推荐", markdown)
-        self.assertIn("到达方式", markdown)
-        self.assertIn("地图导航", markdown)
-        self.assertIn("每日行程", markdown)
-        self.assertIn("Day 0 到达日", markdown)
-        self.assertIn("知味观", markdown)
-        self.assertIn("跨城抵达", markdown)
-        self.assertIn("到站后去酒店/首景点", markdown)
-        self.assertIn("专属地图", markdown)
+        self.assertEqual("鏉窞涓ゅぉ鍦板浘棰勮", payload["map_preview"]["title"])
+        self.assertIn("閰掑簵鎺ㄨ崘", markdown)
+        self.assertIn("鍒拌揪鏂瑰紡", markdown)
+        self.assertIn("鍦板浘瀵艰埅", markdown)
+        self.assertIn("姣忔棩琛岀▼", markdown)
+        self.assertIn("Day 0 鍒拌揪鏃?, markdown)
+        self.assertIn("鐭ュ懗瑙?, markdown)
+        self.assertIn("璺ㄥ煄鎶佃揪", markdown)
+        self.assertIn("鍒扮珯鍚庡幓閰掑簵/棣栨櫙鐐?, markdown)
+        self.assertIn("涓撳睘鍦板浘", markdown)
         self.assertNotIn("| --- |", markdown)
 
     def test_placeholder_arrival_marks_missing_real_train(self):
         trip = SimpleNamespace(
-            title="杭州周末游",
-            summary="先验证到达日占位文案。",
-            primary_destination="杭州",
+            title="鏉窞鍛ㄦ湯娓?,
+            summary="鍏堥獙璇佸埌杈炬棩鍗犱綅鏂囨銆?,
+            primary_destination="鏉窞",
             total_days=1,
             status="draft",
             itinerary_days=[],
@@ -175,15 +175,15 @@ class TripDocumentServiceTests(unittest.TestCase):
             "railway12306": {
                 "arrivals": [
                     {
-                        "origin_city": "上海",
-                        "destination_city": "杭州",
-                        "recommended_mode": "高铁/动车（待确认车次）",
-                        "duration_text": "待接入实时车次后补充",
-                        "price_text": "待接入实时票价后补充",
+                        "origin_city": "涓婃捣",
+                        "destination_city": "鏉窞",
+                        "recommended_mode": "楂橀搧/鍔ㄨ溅锛堝緟纭杞︽锛?,
+                        "duration_text": "寰呮帴鍏ュ疄鏃惰溅娆″悗琛ュ厖",
+                        "price_text": "寰呮帴鍏ュ疄鏃剁エ浠峰悗琛ュ厖",
                         "summary": "",
                         "ticket_status": "placeholder",
                         "data_source": "placeholder",
-                        "official_notice": {"notice": "车次、票价、余票与购票规则请以铁路12306官网/App为准。"},
+                        "official_notice": {"notice": "杞︽銆佺エ浠枫€佷綑绁ㄤ笌璐エ瑙勫垯璇蜂互閾佽矾12306瀹樼綉/App涓哄噯銆?},
                         "candidates": [],
                     }
                 ]
@@ -193,13 +193,13 @@ class TripDocumentServiceTests(unittest.TestCase):
         payload = TripDocumentService.build_delivery_payload(trip=trip, structured_context=structured_context)
 
         self.assertEqual("arrival", payload["daily_itinerary"][0]["day_type"])
-        self.assertIn("暂未获取到真实车次", payload["daily_itinerary"][0]["summary"])
+        self.assertIn("鏆傛湭鑾峰彇鍒扮湡瀹炶溅娆?, payload["daily_itinerary"][0]["summary"])
         self.assertIn(
-            "暂未获取到真实车次",
+            "鏆傛湭鑾峰彇鍒扮湡瀹炶溅娆?,
             payload["daily_itinerary"][0]["periods"][0]["blocks"][0]["note"],
         )
         self.assertIn(
-            "暂未获取到站后细路线",
+            "鏆傛湭鑾峰彇鍒扮珯鍚庣粏璺嚎",
             payload["daily_itinerary"][0]["transfer_to_stay_or_first_stop"]["note"],
         )
 

@@ -12,9 +12,11 @@ Java 类比：
   而是"找出和这段文字语义最相似的记录"。
 """
 
-from qdrant_client import QdrantClient
 from fastembed import TextEmbedding
 from langchain_core.tools import tool
+from qdrant_client import QdrantClient
+
+from rag.embedding_config import get_fastembed_model_kwargs
 
 # ── 配置（必须和 ingest.py 保持一致）────────────────────────
 QDRANT_URL = "http://localhost:6333"
@@ -22,9 +24,27 @@ COLLECTION_NAME = "travel_knowledge"
 EMBEDDING_MODEL = "BAAI/bge-small-zh-v1.5"
 TOP_K = 3  # 返回最相关的前3条结果
 
-# ── 初始化（模块加载时执行一次）────────────────────────────
-_client = QdrantClient(url=QDRANT_URL, check_compatibility=False)
-_model = TextEmbedding(EMBEDDING_MODEL)
+_client: QdrantClient | None = None
+_model: TextEmbedding | None = None
+
+
+def _get_client() -> QdrantClient:
+    """Lazy-init Qdrant client so importing Agent tools has no network side effects."""
+    global _client
+    if _client is None:
+        _client = QdrantClient(url=QDRANT_URL, check_compatibility=False)
+    return _client
+
+
+def _get_model() -> TextEmbedding:
+    """Lazy-load the embedding model and keep its cache in a stable project path."""
+    global _model
+    if _model is None:
+        _model = TextEmbedding(
+            EMBEDDING_MODEL,
+            **get_fastembed_model_kwargs(),
+        )
+    return _model
 
 
 @tool
@@ -36,10 +56,10 @@ def retrieve_local_knowledge(query: str) -> str:
     """
     try:
         # 1. 把用户问题转成向量
-        query_vector = list(_model.embed([query]))[0].tolist()
+        query_vector = list(_get_model().embed([query]))[0].tolist()
 
         # 2. 在 Qdrant 里搜索最相似的文本块
-        response = _client.query_points(
+        response = _get_client().query_points(
             collection_name=COLLECTION_NAME,
             query=query_vector,
             limit=TOP_K,

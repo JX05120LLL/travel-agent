@@ -24,6 +24,8 @@ from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct
 from fastembed import TextEmbedding
 
+from rag.embedding_config import get_fastembed_model_kwargs
+
 # ── 配置 ─────────────────────────────────────────────────────
 QDRANT_URL = "http://localhost:6333"
 COLLECTION_NAME = "travel_knowledge"   # Qdrant 里的"表名"
@@ -33,7 +35,7 @@ CHUNK_SIZE = 300   # 每个文本块最大字符数
 
 # ── 初始化 ───────────────────────────────────────────────────
 print("正在加载 Embedding 模型（首次运行会自动下载，约130MB）...")
-model = TextEmbedding(EMBEDDING_MODEL)
+model = TextEmbedding(EMBEDDING_MODEL, **get_fastembed_model_kwargs())
 print(f"模型加载完成，向量维度：{VECTOR_DIM}")
 
 client = QdrantClient(url=QDRANT_URL)
@@ -179,4 +181,3 @@ def ingest():
 
 if __name__ == "__main__":
     ingest()
-

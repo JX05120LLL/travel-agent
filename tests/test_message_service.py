@@ -3,7 +3,7 @@ import uuid
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from services.message_service import MessageService
+from services.chat.message_service import MessageService
 
 
 class MessageServiceTests(unittest.TestCase):
@@ -33,7 +33,7 @@ class MessageServiceTests(unittest.TestCase):
         result = service.save_user_message(
             session=session,
             user_id=uuid.uuid4(),
-            content="帮我规划杭州两天旅行",
+            content="甯垜瑙勫垝鏉窞涓ゅぉ鏃呰",
             commit=False,
         )
 
@@ -69,7 +69,7 @@ class MessageServiceTests(unittest.TestCase):
         result = service.save_assistant_message(
             session=session,
             user_id=uuid.uuid4(),
-            content="这是推荐方案",
+            content="杩欐槸鎺ㄨ崘鏂规",
             tool_outputs=["tool output"],
             has_error=False,
             extra_metadata={"workspace_sync": {"auto_synced_trip": True}},

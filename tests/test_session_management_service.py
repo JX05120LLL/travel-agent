@@ -20,7 +20,7 @@ if "langchain_core.messages" not in sys.modules:
     sys.modules["langchain_core.messages"] = messages_module
 
 from db.models import ChatSession
-from services.session_management_service import SessionManagementService
+from services.session.session_management_service import SessionManagementService
 
 
 class SessionManagementServiceTests(unittest.TestCase):
@@ -31,7 +31,7 @@ class SessionManagementServiceTests(unittest.TestCase):
         session = ChatSession(
             id=uuid.uuid4(),
             user_id=uuid.uuid4(),
-            title="杭州周末",
+            title="鏉窞鍛ㄦ湯",
             status="active",
         )
 
@@ -56,7 +56,7 @@ class SessionManagementServiceTests(unittest.TestCase):
         session = ChatSession(
             id=uuid.uuid4(),
             user_id=uuid.uuid4(),
-            title="北京出差",
+            title="鍖椾含鍑哄樊",
             status="active",
             is_pinned=True,
         )

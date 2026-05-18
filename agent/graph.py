@@ -55,12 +55,25 @@ from tools.wechat_sender import send_to_wechat_work
 
 load_dotenv()
 
+DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash").strip() or "deepseek-v4-flash"
+DEEPSEEK_THINKING_TYPE = (
+    os.getenv("DEEPSEEK_THINKING_TYPE", "disabled").strip().lower() or "disabled"
+)
+
+
+def _build_deepseek_extra_body() -> dict:
+    """Configure DeepSeek V4 thinking mode for tool-calling compatibility."""
+    if DEEPSEEK_THINKING_TYPE in {"enabled", "disabled"}:
+        return {"thinking": {"type": DEEPSEEK_THINKING_TYPE}}
+    return {"thinking": {"type": "disabled"}}
+
 # ── 初始化 LLM ──────────────────────────────────────────────
 llm = ChatOpenAI(
-    model="deepseek-chat",
+    model=DEEPSEEK_MODEL,
     api_key=os.getenv("DEEPSEEK_API_KEY"),
     base_url="https://api.deepseek.com",
     temperature=0.7,
+    extra_body=_build_deepseek_extra_body(),
 )
 
 # ── 注册工具 ─────────────────────────────────────────────────

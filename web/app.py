@@ -10,6 +10,7 @@ FastAPI Web 应用
 """
 
 import json
+import os
 import sys
 import uuid
 from pathlib import Path
@@ -17,13 +18,18 @@ from typing import Annotated
 from urllib.parse import quote
 
 import uvicorn
-from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request, status
 from fastapi.responses import HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from langchain_core.messages import AIMessage, HumanMessage
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+
+try:
+    from langgraph.errors import GraphRecursionError
+except Exception:  # pragma: no cover - 测试环境可能未安装 langgraph
+    GraphRecursionError = None  # type: ignore[assignment]
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 WEB_DIR = Path(__file__).resolve().parent
@@ -35,32 +41,78 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from db.models import User
 from db.repositories.session_event_repository import create_session_event
 from db.session import get_db
-from services.amap_service import AmapService
-from services.comparison_service import ComparisonService
-from services.errors import (
+from services.auth import (
+    AuthDisabledUserError,
+    AuthInvalidCredentialsError,
+    AuthLoginResult,
+    AuthService,
+    AuthValidationError,
+    DuplicateUsernameError,
+)
+from services.providers.amap_service import AmapService
+from services.chat.chat_turn_runner import ChatTurnRunner
+from services.travel.comparison_service import ComparisonService
+from services.core.errors import (
     ServiceConfigError,
     ServiceIntegrationError,
     ServiceNotFoundError,
     ServiceValidationError,
 )
-from services.message_service import MessageService
-from services.memory_service import MemoryService
-from services.external_call_guard import external_call_guard
-from services.plan_option_service import PlanOptionBranchView, PlanOptionService
-from services.session_management_service import SessionManagementService
-from services.session_service import SessionService
-from services.session_workspace_service import SessionWorkspaceService
-from services.trip_export_service import TripExportService
-from services.trip_service import TripService
+from services.chat.message_service import MessageService
+from services.chat.memory_service import MemoryService
+from services.core.external_call_guard import external_call_guard
+from services.travel.plan_option_service import PlanOptionBranchView, PlanOptionService
+from services.session.session_management_service import SessionManagementService
+from services.session.session_service import SessionService
+from services.session.session_workspace_service import SessionWorkspaceService
+from services.travel.trip_export_service import TripExportService
+from services.travel.trip_service import TripService
+from services.chat.workspace_sync_service import (
+    auto_sync_workspace_after_assistant_reply as shared_auto_sync_workspace_after_assistant_reply,
+)
 from web.auth import get_current_user
 
 app = FastAPI(title="旅行规划助手")
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
 
-_agent = None
+CurrentUserDep = Annotated[User, Depends(get_current_user)]
 # 统一当前用户依赖，后续接真实认证时优先只改这一层。
 CurrentUserDep = Annotated[User, Depends(get_current_user)]
+
+
+class PublicUserResponse(BaseModel):
+    """公开返回给前端的用户摘要。"""
+
+    id: str
+    username: str
+    display_name: str | None
+    status: str
+    created_at: str
+    last_login_at: str | None
+
+
+class RegisterRequest(BaseModel):
+    """用户名密码注册请求。"""
+
+    username: str
+    password: str
+
+
+class LoginRequest(BaseModel):
+    """用户名密码登录请求。"""
+
+    username: str
+    password: str
+
+
+class LoginResponse(BaseModel):
+    """登录成功后的响应。"""
+
+    access_token: str
+    token_type: str
+    expires_in: int
+    user: PublicUserResponse
 
 
 class SessionSummaryResponse(BaseModel):
@@ -356,6 +408,31 @@ def extract_text(message_chunk) -> str:
     return str(raw)
 
 
+def _is_agent_recursion_error(exc: Exception) -> bool:
+    """兼容本地缺少 langgraph 时的递归异常识别。"""
+    if GraphRecursionError is not None and isinstance(exc, GraphRecursionError):
+        return True
+    return exc.__class__.__name__ == "GraphRecursionError"
+
+
+def _build_agent_guardrail_message(*, reason: str, partial_answer: str = "") -> str:
+    """为限步/超时场景生成用户可读的兜底提示。"""
+    partial = (partial_answer or "").strip()
+    suffix = (
+        "\n\n## 系统兜底说明\n"
+        f"- {reason}\n"
+        "- 为避免长时间等待或进入无效循环，我先停止继续自动调用工具。\n"
+        "- 你可以继续补充更明确的信息，比如出发地、日期、预算，或者只指定我先收口哪一部分。"
+    )
+    if partial:
+        return partial + suffix
+    return (
+        "当前这次规划涉及的工具调用较多，我先停止继续自动调用，避免长时间等待或进入无效循环。"
+        f"\n\n原因：{reason}\n"
+        "你可以继续补充更明确的信息，比如出发地、日期、预算，或者只指定我先收口哪一部分。"
+    )
+
+
 def build_history_messages(history_raw: str) -> list:
     """把前端传来的历史消息 JSON 转回 LangChain 消息对象。"""
     if not history_raw:
@@ -382,6 +459,18 @@ def build_history_messages(history_raw: str) -> list:
             messages.append(AIMessage(content=content))
 
     return messages
+
+
+def serialize_user(user: User) -> PublicUserResponse:
+    """把用户对象转换成前端可用的安全摘要。"""
+    return PublicUserResponse(
+        id=str(user.id),
+        username=user.username,
+        display_name=user.display_name,
+        status=user.status,
+        created_at=user.created_at.isoformat(),
+        last_login_at=user.last_login_at.isoformat() if user.last_login_at else None,
+    )
 
 
 def serialize_session(session) -> SessionSummaryResponse:
@@ -454,182 +543,13 @@ def _auto_sync_workspace_after_assistant_reply(
     user_id: uuid.UUID,
     session_action,
 ) -> dict:
-    """助手回复完成后，自动同步到 plan option / trip。"""
-    plan_option_service = PlanOptionService(db)
-    comparison_service = ComparisonService(db)
-    trip_service = TripService(db)
-    memory_service = MemoryService(db)
-
-    synced_plan_option_id = None
-    synced_comparison = None
-    synced_trip = None
-    comparison_candidate_ids: list[uuid.UUID] = []
-
-    if session.active_plan_option_id is not None:
-        try:
-            synced_view = plan_option_service.sync_option_from_latest_message(
-                session_id=session.id,
-                plan_option_id=session.active_plan_option_id,
-                user_id=user_id,
-                activate=True,
-                commit=False,
-            )
-            synced_plan_option_id = synced_view.plan_option.id
-            comparison_candidate_ids.append(synced_plan_option_id)
-            try:
-                created_items = plan_option_service.create_options_from_latest_message(
-                    session_id=session.id,
-                    user_id=user_id,
-                    commit=False,
-                )
-                comparison_candidate_ids.extend(
-                    item.plan_option.id
-                    for item in created_items
-                )
-            except ValueError:
-                pass
-        except ValueError:
-            synced_plan_option_id = session.active_plan_option_id
-            if synced_plan_option_id is not None:
-                comparison_candidate_ids.append(synced_plan_option_id)
-    else:
-        try:
-            created_items = plan_option_service.create_options_from_latest_message(
-                session_id=session.id,
-                user_id=user_id,
-                commit=False,
-            )
-            if created_items:
-                synced_plan_option_id = created_items[0].plan_option.id
-                comparison_candidate_ids.extend(
-                    item.plan_option.id
-                    for item in created_items
-                )
-        except ValueError:
-            synced_plan_option_id = None
-
-    deduped_comparison_candidate_ids = list(dict.fromkeys(comparison_candidate_ids))
-    if len(deduped_comparison_candidate_ids) > 1:
-        synced_comparison = comparison_service.create_or_update_comparison(
-            session_id=session.id,
-            user_id=user_id,
-            plan_option_ids=deduped_comparison_candidate_ids,
-            commit=False,
-        )
-        if synced_comparison.recommended_option_id is not None:
-            synced_plan_option_id = synced_comparison.recommended_option_id
-
-    if synced_plan_option_id is not None:
-        try:
-            synced_trip = trip_service.sync_trip_from_plan_option(
-                session_id=session.id,
-                user_id=user_id,
-                plan_option_id=synced_plan_option_id,
-                comparison_id=(
-                    synced_comparison.id
-                    if synced_comparison is not None
-                    else session.active_comparison_id
-                ),
-                commit=False,
-            )
-        except ValueError:
-            synced_trip = None
-
-    context_payload = memory_service.build_session_context_payload(session=session)
-    comparison_decision_payload = comparison_service.build_decision_payload(
-        synced_comparison
-    )
-    recommended_plan_option_id = comparison_decision_payload.get("recommended_plan_option_id")
-    if recommended_plan_option_id is None and synced_plan_option_id is not None:
-        recommended_plan_option_id = str(synced_plan_option_id)
-
-    recommended_plan_title = comparison_decision_payload.get("recommended_plan_title")
-    if recommended_plan_title is None:
-        recommended_plan_title = context_payload.get("active_plan_title")
-
-    alternate_plan_titles = comparison_decision_payload.get("alternate_plan_titles") or []
-    recommendation_reasons = comparison_decision_payload.get("recommendation_reasons") or []
-    external_governance = {
-        "amap": external_call_guard.snapshot("amap"),
-        "amap_mcp": external_call_guard.snapshot("amap_mcp"),
-        "fliggy_hotel": external_call_guard.snapshot("fliggy_hotel"),
-        "railway12306": external_call_guard.snapshot("railway12306"),
-    }
-    synced_constraints = dict(getattr(synced_trip, "constraints", None) or {}) if synced_trip is not None else {}
-    price_confidence_summary = (
-        dict(synced_constraints.get("price_confidence_summary") or {})
-        if synced_constraints
-        else {}
-    )
-    delivery_payload = dict(synced_constraints.get("delivery_payload") or {}) if synced_constraints else {}
-    map_preview = dict(delivery_payload.get("map_preview") or {}) if delivery_payload else {}
-    official_booking_notice = None
-    booking_notices = delivery_payload.get("booking_notices")
-    if isinstance(booking_notices, list):
-        for notice in booking_notices:
-            if isinstance(notice, dict) and notice.get("notice"):
-                official_booking_notice = notice
-                break
-
-    create_session_event(
-        db,
-        session_id=session.id,
+    """Backward-compatible wrapper around the shared workspace sync logic."""
+    return shared_auto_sync_workspace_after_assistant_reply(
+        db=db,
+        session=session,
         user_id=user_id,
-        plan_option_id=synced_plan_option_id,
-        comparison_id=synced_comparison.id if synced_comparison is not None else None,
-        trip_id=synced_trip.id if synced_trip is not None else None,
-        event_type="workspace_auto_synced",
-        event_payload={
-            "route_action": session_action.route.action,
-            "auto_synced_plan": bool(context_payload.get("active_plan_option_id")),
-            "auto_compared_options": synced_comparison is not None,
-            "auto_synced_trip": synced_trip is not None,
-            "comparison_candidate_ids": [str(item) for item in deduped_comparison_candidate_ids],
-            "recommended_plan_option_id": recommended_plan_option_id,
-            "recommended_plan_title": recommended_plan_title,
-            "alternate_plan_titles": alternate_plan_titles,
-            "recommendation_reasons": recommendation_reasons,
-            "active_trip_id": str(synced_trip.id) if synced_trip is not None else None,
-            "active_trip_title": synced_trip.title if synced_trip is not None else None,
-            "external_governance": external_governance,
-            "trip_document_ready": bool(synced_constraints.get("document_markdown")),
-            "hotel_price_status": price_confidence_summary.get("hotel_price_status"),
-            "rail_ticket_status": price_confidence_summary.get("rail_ticket_status"),
-            "official_booking_notice": official_booking_notice,
-            "map_preview_status": {
-                "provider_mode": map_preview.get("provider_mode"),
-                "has_personal_map": bool(map_preview.get("personal_map_url")),
-                "degraded_reason": map_preview.get("degraded_reason"),
-            },
-        },
+        session_action=session_action,
     )
-
-    return {
-        "route_action": session_action.route.action,
-        "active_plan_option_id": context_payload.get("active_plan_option_id"),
-        "active_plan_summary": context_payload.get("active_plan_summary"),
-        "active_comparison_id": context_payload.get("active_comparison_id"),
-        "active_comparison_summary": context_payload.get("active_comparison_summary"),
-        "recommended_plan_option_id": recommended_plan_option_id,
-        "recommended_plan_title": recommended_plan_title,
-        "alternate_plan_titles": alternate_plan_titles,
-        "recommendation_reasons": recommendation_reasons,
-        "active_trip_id": str(synced_trip.id) if synced_trip is not None else None,
-        "active_trip_title": synced_trip.title if synced_trip is not None else None,
-        "auto_synced_plan": bool(context_payload.get("active_plan_option_id")),
-        "auto_compared_options": synced_comparison is not None,
-        "auto_synced_trip": synced_trip is not None,
-        "external_governance": external_governance,
-        "trip_document_ready": bool(synced_constraints.get("document_markdown")),
-        "hotel_price_status": price_confidence_summary.get("hotel_price_status"),
-        "rail_ticket_status": price_confidence_summary.get("rail_ticket_status"),
-        "official_booking_notice": official_booking_notice,
-        "map_preview_status": {
-            "provider_mode": map_preview.get("provider_mode"),
-            "has_personal_map": bool(map_preview.get("personal_map_url")),
-            "degraded_reason": map_preview.get("degraded_reason"),
-        },
-    }
 
 
 def serialize_plan_option(plan_option_view: PlanOptionBranchView) -> PlanOptionSummaryResponse:
@@ -838,10 +758,96 @@ async def index(request: Request):
     )
 
 
+@app.get("/login", response_class=HTMLResponse)
+async def login_page(request: Request):
+    """渲染登录页。"""
+    return templates.TemplateResponse(
+        name="auth.html",
+        request=request,
+        context={
+            "mode": "login",
+            "page_title": "登录 - 旅行规划助手",
+            "headline": "登录后继续你的旅行规划。",
+            "subtitle": "你的会话、历史方案、偏好和正式行程都会按用户隔离保存。",
+        },
+    )
+
+
+@app.get("/register", response_class=HTMLResponse)
+async def register_page(request: Request):
+    """渲染注册页。"""
+    return templates.TemplateResponse(
+        name="auth.html",
+        request=request,
+        context={
+            "mode": "register",
+            "page_title": "注册 - 旅行规划助手",
+            "headline": "创建账号后，再开始保存你的专属会话。",
+            "subtitle": "第一版先支持最简单的用户名密码注册，注册后跳转到登录页。",
+        },
+    )
+
+
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon():
     """避免浏览器默认请求 favicon 时出现 404 噪音。"""
     return Response(status_code=204)
+
+
+@app.post(
+    "/auth/register",
+    response_model=PublicUserResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def register_user_account(
+    payload: RegisterRequest,
+    db: Session = Depends(get_db),
+):
+    """注册一个新的 Web 用户。"""
+    auth_service = AuthService(db)
+    try:
+        user = auth_service.register_user(
+            username=payload.username,
+            password=payload.password,
+        )
+    except DuplicateUsernameError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except AuthValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return serialize_user(user)
+
+
+@app.post("/auth/login", response_model=LoginResponse)
+async def login_user_account(
+    payload: LoginRequest,
+    db: Session = Depends(get_db),
+):
+    """用户名密码登录并返回访问令牌。"""
+    auth_service = AuthService(db)
+    try:
+        result: AuthLoginResult = auth_service.login_user(
+            username=payload.username,
+            password=payload.password,
+        )
+    except AuthInvalidCredentialsError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except AuthDisabledUserError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except AuthValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return LoginResponse(
+        access_token=result.access_token,
+        token_type=result.token_type,
+        expires_in=result.expires_in,
+        user=serialize_user(result.user),
+    )
+
+
+@app.get("/auth/me", response_model=PublicUserResponse)
+async def get_authenticated_user_profile(user: CurrentUserDep):
+    """返回当前登录用户摘要。"""
+    return serialize_user(user)
 
 
 @app.get("/integrations/amap/geocode")
@@ -1866,10 +1872,7 @@ async def chat(
             media_type="text/event-stream",
         )
 
-    is_new_session = False
-    session_management_service = SessionManagementService(db)
-    message_service = MessageService(db)
-
+    session_uuid = None
     if session_id.strip():
         try:
             session_uuid = uuid.UUID(session_id.strip())
@@ -1879,140 +1882,21 @@ async def chat(
                 media_type="text/event-stream",
             )
 
-        try:
-            session = session_management_service.get_session_or_raise(
-                session_id=session_uuid,
-                user_id=user.id,
-            )
-        except ServiceNotFoundError:
-            return StreamingResponse(
-                iter([format_sse("error", {"message": "会话不存在或不属于当前用户"})]),
-                media_type="text/event-stream",
-            )
-    else:
-        session = session_management_service.create_session(
-            user_id=user.id,
-            first_message=user_input,
-        )
-        is_new_session = True
-
     fallback_history = build_history_messages(history)
-    session_service = SessionService(db)
-    memory_service = MemoryService(db)
-    session_action = session_service.apply_user_input(
-        session=session,
-        user_id=user.id,
-        user_input=user_input,
-    )
-
-    message_service.save_user_message(session=session, user_id=user.id, content=user_input)
+    runner = ChatTurnRunner(db)
 
     def event_stream():
-        yield format_sse(
-            "session",
-            {
-                "session_id": str(session.id),
-                "is_new": is_new_session,
-                "title": session.title,
-            },
-        )
-        yield format_sse(
-            "intent",
-            session_action.route.to_intent_payload(),
-        )
-
-        if session_action.clarification_message:
-            clarification_message = session_action.clarification_message
-            yield format_sse("phase", {"value": "answering", "label": "正在确认你的意图"})
-            yield format_sse("token", {"content": clarification_message})
-            message_service.save_assistant_message(
-                session=session,
-                user_id=user.id,
-                content=clarification_message,
-                tool_outputs=[],
-                has_error=False,
-            )
-            yield format_sse("done", {"status": "ok"})
-            return
-
-        input_messages = memory_service.build_runtime_context_messages(
-            session=session,
-            fallback_history=fallback_history,
-            extra_sections=session_action.extra_sections,
-            current_user_input=user_input,
-            recall_result=session_action.recall,
-        )
-        agent = get_agent()
-        input_data = {"messages": input_messages}
-        has_tool_output = False
-        has_answer_token = False
-        tool_outputs = []
-        final_answer = ""
-
-        yield format_sse("phase", {"value": "planning", "label": "正在分析你的需求"})
-
         try:
-            for event in agent.stream(input_data, stream_mode="messages"):
-                if not isinstance(event, tuple) or len(event) != 2:
-                    continue
-
-                message_chunk, metadata = event
-                node = metadata.get("langgraph_node", "")
-                text = extract_text(message_chunk)
-
-                if node == "tools":
-                    if not has_tool_output:
-                        has_tool_output = True
-                        yield format_sse(
-                            "phase",
-                            {"value": "tooling", "label": "正在调用旅行工具"},
-                        )
-                    if text:
-                        tool_outputs.append(text)
-                        yield format_sse("tool", {"content": text})
-
-                elif node == "llm_node" and text:
-                    if not has_answer_token:
-                        has_answer_token = True
-                        yield format_sse(
-                            "phase",
-                            {"value": "answering", "label": "正在整理最终建议"},
-                        )
-                    final_answer += text
-                    yield format_sse("token", {"content": text})
-
-            if final_answer.strip():
-                assistant_message = message_service.save_assistant_message(
-                    session=session,
-                    user_id=user.id,
-                    content=final_answer,
-                    tool_outputs=tool_outputs,
-                    has_error=False,
-                    commit=False,
-                )
-                workspace_payload = _auto_sync_workspace_after_assistant_reply(
-                    db=db,
-                    session=session,
-                    user_id=user.id,
-                    session_action=session_action,
-                )
-                message_metadata = dict(getattr(assistant_message, "message_metadata", None) or {})
-                message_metadata["workspace_sync"] = workspace_payload
-                assistant_message.message_metadata = message_metadata
-                db.commit()
-                db.refresh(session)
-                db.refresh(assistant_message)
-                yield format_sse("workspace", workspace_payload)
-            yield format_sse("done", {"status": "ok"})
+            for item in runner.stream_turn(
+                user=user,
+                message=user_input,
+                session_id=session_uuid,
+                fallback_history=fallback_history,
+            ):
+                yield format_sse(item.event, item.payload)
+        except ValueError as exc:
+            yield format_sse("error", {"message": str(exc)})
         except Exception as exc:
-            error_message = f"请求失败：{exc}"
-            message_service.save_assistant_message(
-                session=session,
-                user_id=user.id,
-                content=final_answer.strip() or error_message,
-                tool_outputs=tool_outputs,
-                has_error=True,
-            )
             yield format_sse("error", {"message": str(exc)})
 
     return StreamingResponse(

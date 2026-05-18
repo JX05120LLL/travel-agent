@@ -7,12 +7,25 @@ Tavily 是专门为 LLM 设计的搜索 API，返回的结果比 Google 更"干�
 用途：搜索景点介绍、当地美食推荐、旅行攻略等
 """
 
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 import os
 from langchain_core.tools import tool
 from tavily import TavilyClient
 from dotenv import load_dotenv
 
 load_dotenv()
+
+
+def _read_timeout_seconds(default: float = 45.0) -> float:
+    raw = os.getenv("TAVILY_TIMEOUT_SECONDS", str(default))
+    try:
+        value = float(raw or default)
+    except (TypeError, ValueError):
+        value = default
+    return max(value, 1.0)
+
+
+TAVILY_TIMEOUT_SECONDS = _read_timeout_seconds()
 
 
 @tool
@@ -28,12 +41,22 @@ def search_travel_info(query: str) -> str:
 
     try:
         client = TavilyClient(api_key=api_key)
-        # search_depth="advanced" 会返回更详细的内容
-        response = client.search(
+        executor = ThreadPoolExecutor(max_workers=1)
+        future = executor.submit(
+            client.search,
             query=query,
             search_depth="advanced",
             max_results=5,
-            include_answer=True  # 让 Tavily 帮你做一次摘要
+            include_answer=True,
+        )
+        try:
+            response = future.result(timeout=TAVILY_TIMEOUT_SECONDS)
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
+    except FutureTimeoutError:
+        return (
+            "搜索超时：当前联网搜索响应过慢，我先跳过这一步。"
+            "如果你愿意，我可以基于已有信息先给你一版不依赖联网搜索的方案。"
         )
     except Exception as e:
         return f"搜索失败：{e}"

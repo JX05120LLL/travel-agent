@@ -39,15 +39,15 @@ if "httpx" not in sys.modules:
     sys.modules["httpx"] = httpx_module
 
 from db.models import ChatSession
-from services.comparison_service import ComparisonService
-from services.trip_service import TripService
+from services.travel.comparison_service import ComparisonService
+from services.travel.trip_service import TripService
 
 
 def build_session() -> ChatSession:
     session = ChatSession(
         id=uuid.uuid4(),
         user_id=uuid.uuid4(),
-        title="状态治理测试工作区",
+        title="鐘舵€佹不鐞嗘祴璇曞伐浣滃尯",
         status="active",
     )
     return session
@@ -70,8 +70,8 @@ class WorkspaceStateServiceTests(unittest.TestCase):
         option_b_id = uuid.uuid4()
         session.active_plan_option_id = option_a_id
 
-        option_a = SimpleNamespace(id=option_a_id, title="北京方案", status="draft")
-        option_b = SimpleNamespace(id=option_b_id, title="天津方案", status="draft")
+        option_a = SimpleNamespace(id=option_a_id, title="鍖椾含鏂规", status="draft")
+        option_b = SimpleNamespace(id=option_b_id, title="澶╂触鏂规", status="draft")
         comparison = SimpleNamespace(
             id=uuid.uuid4(),
             name="",
@@ -124,11 +124,11 @@ class WorkspaceStateServiceTests(unittest.TestCase):
 
         option_a = SimpleNamespace(
             id=option_a_id,
-            title="杭州简版",
+            title="鏉窞绠€鐗?,
             status="draft",
-            summary="只保留景点概要",
-            plan_markdown="西湖一日游",
-            primary_destination="杭州",
+            summary="鍙繚鐣欐櫙鐐规瑕?,
+            plan_markdown="瑗挎箹涓€鏃ユ父",
+            primary_destination="鏉窞",
             total_days=1,
             pace=None,
             budget_min=None,
@@ -137,11 +137,11 @@ class WorkspaceStateServiceTests(unittest.TestCase):
         )
         option_b = SimpleNamespace(
             id=option_b_id,
-            title="杭州完整方案",
+            title="鏉窞瀹屾暣鏂规",
             status="draft",
-            summary="包含路线、住宿、美食与逐段交通",
-            plan_markdown="Day1 西湖 -> 河坊街\nDay2 灵隐寺 -> 龙井\n附住宿和美食推荐",
-            primary_destination="杭州",
+            summary="鍖呭惈璺嚎銆佷綇瀹裤€佺編椋熶笌閫愭浜ら€?,
+            plan_markdown="Day1 瑗挎箹 -> 娌冲潑琛梊nDay2 鐏甸殣瀵?-> 榫欎簳\n闄勪綇瀹垮拰缇庨鎺ㄨ崘",
+            primary_destination="鏉窞",
             total_days=2,
             pace="relaxed",
             budget_min=300,
@@ -190,9 +190,9 @@ class WorkspaceStateServiceTests(unittest.TestCase):
         )
 
         self.assertEqual(option_b_id, created.recommended_option_id)
-        self.assertIn("当前推荐方案：杭州完整方案", created.summary)
-        self.assertIn("地图结构化结果更完整", created.summary)
-        self.assertIn("备选方案：杭州简版", created.summary)
+        self.assertIn("褰撳墠鎺ㄨ崘鏂规锛氭澀宸炲畬鏁存柟妗?, created.summary)
+        self.assertIn("鍦板浘缁撴瀯鍖栫粨鏋滄洿瀹屾暣", created.summary)
+        self.assertIn("澶囬€夋柟妗堬細鏉窞绠€鐗?, created.summary)
         event_payload = create_session_event.call_args.kwargs["event_payload"]
         self.assertEqual(str(option_b_id), event_payload["recommended_option_id"])
         self.assertTrue(event_payload["recommendation_reasons"])
@@ -202,26 +202,26 @@ class WorkspaceStateServiceTests(unittest.TestCase):
         option_b_id = uuid.uuid4()
         comparison = SimpleNamespace(
             recommended_option_id=option_b_id,
-            recommended_option=SimpleNamespace(title="杭州完整方案"),
+            recommended_option=SimpleNamespace(title="鏉窞瀹屾暣鏂规"),
             summary=(
-                "系统已自动比较 2 个候选方案：杭州简版、杭州完整方案。\n"
-                "当前推荐方案：杭州完整方案。\n"
-                "推荐理由：地图结构化结果更完整；已包含住宿推荐；已包含景点间逐段交通。\n"
-                "备选方案：杭州简版。"
+                "绯荤粺宸茶嚜鍔ㄦ瘮杈?2 涓€欓€夋柟妗堬細鏉窞绠€鐗堛€佹澀宸炲畬鏁存柟妗堛€俓n"
+                "褰撳墠鎺ㄨ崘鏂规锛氭澀宸炲畬鏁存柟妗堛€俓n"
+                "鎺ㄨ崘鐞嗙敱锛氬湴鍥剧粨鏋勫寲缁撴灉鏇村畬鏁达紱宸插寘鍚綇瀹挎帹鑽愶紱宸插寘鍚櫙鐐归棿閫愭浜ら€氥€俓n"
+                "澶囬€夋柟妗堬細鏉窞绠€鐗堛€?
             ),
             items=[
-                SimpleNamespace(plan_option=SimpleNamespace(id=option_a_id, title="杭州简版")),
-                SimpleNamespace(plan_option=SimpleNamespace(id=option_b_id, title="杭州完整方案")),
+                SimpleNamespace(plan_option=SimpleNamespace(id=option_a_id, title="鏉窞绠€鐗?)),
+                SimpleNamespace(plan_option=SimpleNamespace(id=option_b_id, title="鏉窞瀹屾暣鏂规")),
             ],
         )
 
         payload = ComparisonService.build_decision_payload(comparison)
 
         self.assertEqual(str(option_b_id), payload["recommended_plan_option_id"])
-        self.assertEqual("杭州完整方案", payload["recommended_plan_title"])
-        self.assertEqual(["杭州简版"], payload["alternate_plan_titles"])
+        self.assertEqual("鏉窞瀹屾暣鏂规", payload["recommended_plan_title"])
+        self.assertEqual(["鏉窞绠€鐗?], payload["alternate_plan_titles"])
         self.assertEqual(
-            ["地图结构化结果更完整", "已包含住宿推荐", "已包含景点间逐段交通"],
+            ["鍦板浘缁撴瀯鍖栫粨鏋滄洿瀹屾暣", "宸插寘鍚綇瀹挎帹鑽?, "宸插寘鍚櫙鐐归棿閫愭浜ら€?],
             payload["recommendation_reasons"],
         )
 
@@ -329,8 +329,8 @@ class WorkspaceStateServiceTests(unittest.TestCase):
         session = build_session()
         plan_option = SimpleNamespace(
             id=uuid.uuid4(),
-            title="杭州两日慢游",
-            primary_destination="杭州",
+            title="鏉窞涓ゆ棩鎱㈡父",
+            primary_destination="鏉窞",
             travel_start_date=None,
             travel_end_date=None,
             total_days=2,
@@ -340,8 +340,8 @@ class WorkspaceStateServiceTests(unittest.TestCase):
             pace=None,
             preferences={},
             constraints={},
-            summary="围绕西湖与河坊街安排两天行程。",
-            plan_markdown="## 杭州两日慢游\n先逛西湖，再去河坊街。",
+            summary="鍥寸粫瑗挎箹涓庢渤鍧婅瀹夋帓涓ゅぉ琛岀▼銆?,
+            plan_markdown="## 鏉窞涓ゆ棩鎱㈡父\n鍏堥€涜タ婀栵紝鍐嶅幓娌冲潑琛椼€?,
             destinations=[],
             is_selected=False,
             status="draft",
@@ -350,70 +350,70 @@ class WorkspaceStateServiceTests(unittest.TestCase):
             id=uuid.uuid4(),
             content="\n".join(
                 [
-                    "## 推荐方案",
-                    "### 预算汇总",
-                    "- 人均约 1200-1600 元，含酒店与市内交通",
-                    "- 酒店预算：500-700 元/晚",
-                    "### 注意事项",
-                    "- 西湖和河坊街周边节假日人流较大，建议早点出发",
-                    "- 晚间回酒店尽量避开末班车前高峰",
+                    "## 鎺ㄨ崘鏂规",
+                    "### 棰勭畻姹囨€?,
+                    "- 浜哄潎绾?1200-1600 鍏冿紝鍚厭搴椾笌甯傚唴浜ら€?,
+                    "- 閰掑簵棰勭畻锛?00-700 鍏?鏅?,
+                    "### 娉ㄦ剰浜嬮」",
+                    "- 瑗挎箹鍜屾渤鍧婅鍛ㄨ竟鑺傚亣鏃ヤ汉娴佽緝澶э紝寤鸿鏃╃偣鍑哄彂",
+                    "- 鏅氶棿鍥為厭搴楀敖閲忛伩寮€鏈彮杞﹀墠楂樺嘲",
                 ]
             ),
             message_metadata={
                 "tool_outputs": [
                     "\n".join(
                         [
-                            "## 跨城到达建议（12306预留）",
-                            "- 出发城市：上海",
-                            "- 目的城市：杭州",
-                            "- 出发日期：2026-05-01",
-                            "- 推荐方式：高铁/动车（12306待接入）",
-                            "- 预计耗时：待接入12306后补全",
-                            "- 票价参考：待接入12306后补全",
-                            "- 接入状态：placeholder",
-                            "- 方案摘要：建议优先高铁到达杭州东站，再衔接西湖片区酒店。",
+                            "## 璺ㄥ煄鍒拌揪寤鸿锛?2306棰勭暀锛?,
+                            "- 鍑哄彂鍩庡競锛氫笂娴?,
+                            "- 鐩殑鍩庡競锛氭澀宸?,
+                            "- 鍑哄彂鏃ユ湡锛?026-05-01",
+                            "- 鎺ㄨ崘鏂瑰紡锛氶珮閾?鍔ㄨ溅锛?2306寰呮帴鍏ワ級",
+                            "- 棰勮鑰楁椂锛氬緟鎺ュ叆12306鍚庤ˉ鍏?,
+                            "- 绁ㄤ环鍙傝€冿細寰呮帴鍏?2306鍚庤ˉ鍏?,
+                            "- 鎺ュ叆鐘舵€侊細placeholder",
+                            "- 鏂规鎽樿锛氬缓璁紭鍏堥珮閾佸埌杈炬澀宸炰笢绔欙紝鍐嶈鎺ヨタ婀栫墖鍖洪厭搴椼€?,
                             "",
-                            "### 补充说明",
-                            "- 当前为 12306 预留接口，暂未接入真实车次。",
+                            "### 琛ュ厖璇存槑",
+                            "- 褰撳墠涓?12306 棰勭暀鎺ュ彛锛屾殏鏈帴鍏ョ湡瀹炶溅娆°€?,
                         ]
                     ),
                     "\n".join(
                         [
-                            "## 路线规划",
-                            "- 起点：杭州东站",
-                            "- 终点：西湖",
-                            "- 出行方式：公交/地铁",
-                            "- 城市：杭州",
-                            "距离：8.2 km",
-                            "预计耗时：24分钟",
-                            "总步行距离：450 米",
-                            "票价参考：3 元",
+                            "## 璺嚎瑙勫垝",
+                            "- 璧风偣锛氭澀宸炰笢绔?,
+                            "- 缁堢偣锛氳タ婀?,
+                            "- 鍑鸿鏂瑰紡锛氬叕浜?鍦伴搧",
+                            "- 鍩庡競锛氭澀宸?,
+                            "璺濈锛?.2 km",
+                            "棰勮鑰楁椂锛?4鍒嗛挓",
+                            "鎬绘琛岃窛绂伙細450 绫?,
+                            "绁ㄤ环鍙傝€冿細3 鍏?,
                             "",
-                            "### 逐步换乘",
-                            "1. 步行 300 米到龙翔桥站",
-                            "   - 类型：步行",
-                            "   - 距离：300 米",
-                            "   - 到达点：龙翔桥站",
-                            "2. 乘坐 地铁1号线，从龙翔桥站到定安路站，经过 2 站",
-                            "   - 类型：地铁",
-                            "   - 线路：地铁1号线",
-                            "   - 上车站：龙翔桥站",
-                            "   - 下车站：定安路站",
-                            "   - 站数：2",
+                            "### 閫愭鎹箻",
+                            "1. 姝ヨ 300 绫冲埌榫欑繑妗ョ珯",
+                            "   - 绫诲瀷锛氭琛?,
+                            "   - 璺濈锛?00 绫?,
+                            "   - 鍒拌揪鐐癸細榫欑繑妗ョ珯",
+                            "2. 涔樺潗 鍦伴搧1鍙风嚎锛屼粠榫欑繑妗ョ珯鍒板畾瀹夎矾绔欙紝缁忚繃 2 绔?,
+                            "   - 绫诲瀷锛氬湴閾?,
+                            "   - 绾胯矾锛氬湴閾?鍙风嚎",
+                            "   - 涓婅溅绔欙細榫欑繑妗ョ珯",
+                            "   - 涓嬭溅绔欙細瀹氬畨璺珯",
+                            "   - 绔欐暟锛?",
                         ]
                     ),
                     "\n".join(
                         [
-                            "## 住宿推荐（酒店/民宿）",
-                            "- 中心点：西湖",
-                            "- 检索半径：5000 米",
-                            "- 筛选后数量：1/4",
-                            "- 筛选条件：预算≤400 元，评分≥4.5，距离≤3000 米",
+                            "## 浣忓鎺ㄨ崘锛堥厭搴?姘戝锛?,
+                            "- 涓績鐐癸細瑗挎箹",
+                            "- 妫€绱㈠崐寰勶細5000 绫?,
+                            "- 绛涢€夊悗鏁伴噺锛?/4",
+                            "- 绛涢€夋潯浠讹細棰勭畻鈮?00 鍏冿紝璇勫垎鈮?.5锛岃窛绂烩墹3000 绫?,
                             "",
-                            "### 推荐列表",
-                            "1. **湖畔酒店**（酒店）",
-                            "   距离：900 m｜评分：4.8｜人均：380 元",
-                            "   地址：西湖大道 1 号｜电话：0571-12345678",
+                            "### 鎺ㄨ崘鍒楄〃",
+                            "1. **婀栫晹閰掑簵**锛堥厭搴楋級",
+                            "   璺濈锛?00 m锝滆瘎鍒嗭細4.8锝滀汉鍧囷細380 鍏?,
+                            "   鍦板潃锛氳タ婀栧ぇ閬?1 鍙凤綔鐢佃瘽锛?571-12345678",
                         ]
                     ),
                 ]
@@ -478,19 +478,19 @@ class WorkspaceStateServiceTests(unittest.TestCase):
         self.assertEqual(structured_context, plan_option.constraints["structured_context"])
         self.assertEqual(2, len(captured_days))
         self.assertEqual(4, len(captured_days[0].items))
-        self.assertEqual("当日景点动线：杭州东站 -> 西湖", captured_days[0].summary)
+        self.assertEqual("褰撴棩鏅偣鍔ㄧ嚎锛氭澀宸炰笢绔?-> 瑗挎箹", captured_days[0].summary)
         self.assertEqual("route", captured_days[0].items[0]["type"])
         self.assertEqual("stay_recommendations", captured_days[0].items[1]["type"])
         self.assertEqual("arrival_recommendation", captured_days[0].items[2]["type"])
         self.assertEqual("transit", captured_days[0].items[3]["type"])
         self.assertEqual("morning", captured_days[0].items[2]["time_period"])
         self.assertEqual("morning", captured_days[0].items[3]["time_period"])
-        self.assertEqual("杭州东站", captured_days[0].items[3]["from"])
-        self.assertEqual("西湖", captured_days[0].items[3]["to"])
+        self.assertEqual("鏉窞涓滅珯", captured_days[0].items[3]["from"])
+        self.assertEqual("瑗挎箹", captured_days[0].items[3]["to"])
         self.assertEqual(
             [
-                "步行 300 米到龙翔桥站",
-                "乘坐 地铁1号线，从龙翔桥站到定安路站，经过 2 站",
+                "姝ヨ 300 绫冲埌榫欑繑妗ョ珯",
+                "涔樺潗 鍦伴搧1鍙风嚎锛屼粠榫欑繑妗ョ珯鍒板畾瀹夎矾绔欙紝缁忚繃 2 绔?,
             ],
             captured_days[0].items[3]["steps"],
         )
@@ -507,58 +507,58 @@ class WorkspaceStateServiceTests(unittest.TestCase):
                     {
                         "provider": "amap",
                         "type": "spot_route",
-                        "title": "景点串联路线",
-                        "summary": "杭州公交/地铁串联 3 个点位",
-                        "data": {"spot_sequence": ["西湖", "河坊街", "南宋御街"]},
+                        "title": "鏅偣涓茶仈璺嚎",
+                        "summary": "鏉窞鍏氦/鍦伴搧涓茶仈 3 涓偣浣?,
+                        "data": {"spot_sequence": ["瑗挎箹", "娌冲潑琛?, "鍗楀畫寰¤"]},
                     },
                     {
                         "provider": "amap",
                         "type": "stay_recommendations",
-                        "title": "住宿推荐",
-                        "summary": "西湖附近住宿",
-                        "data": {"center": "西湖"},
+                        "title": "浣忓鎺ㄨ崘",
+                        "summary": "瑗挎箹闄勮繎浣忓",
+                        "data": {"center": "瑗挎箹"},
                     },
                     {
                         "provider": "amap",
                         "type": "food_recommendations",
-                        "title": "周边美食推荐",
-                        "summary": "河坊街附近美食",
-                        "data": {"center": "河坊街"},
+                        "title": "鍛ㄨ竟缇庨鎺ㄨ崘",
+                        "summary": "娌冲潑琛楅檮杩戠編椋?,
+                        "data": {"center": "娌冲潑琛?},
                     },
                     {
                         "provider": "amap",
                         "type": "poi_list",
-                        "title": "POI 候选点位",
-                        "summary": "南宋御街候选点位",
-                        "data": {"city": "杭州"},
+                        "title": "POI 鍊欓€夌偣浣?,
+                        "summary": "鍗楀畫寰¤鍊欓€夌偣浣?,
+                        "data": {"city": "鏉窞"},
                     },
                 ],
                 "routes": [
                     {
                         "route_kind": "spot_sequence",
-                        "city": "杭州",
-                        "mode": "公交/地铁",
-                        "spot_sequence": ["西湖", "河坊街", "南宋御街"],
-                        "original_spot_sequence": ["西湖", "南宋御街", "河坊街"],
-                        "optimization_note": "已启用（固定首点：西湖）",
+                        "city": "鏉窞",
+                        "mode": "鍏氦/鍦伴搧",
+                        "spot_sequence": ["瑗挎箹", "娌冲潑琛?, "鍗楀畫寰¤"],
+                        "original_spot_sequence": ["瑗挎箹", "鍗楀畫寰¤", "娌冲潑琛?],
+                        "optimization_note": "宸插惎鐢紙鍥哄畾棣栫偣锛氳タ婀栵級",
                         "legs": [
                             {
                                 "segment_no": 1,
-                                "origin": "西湖",
-                                "destination": "河坊街",
-                                "duration_text": "24分钟",
+                                "origin": "瑗挎箹",
+                                "destination": "娌冲潑琛?,
+                                "duration_text": "24鍒嗛挓",
                                 "steps": [
-                                    {"instruction": "步行 300 米到龙翔桥站"},
-                                    {"instruction": "乘坐 地铁1号线，从龙翔桥站到定安路站，经过 2 站"},
+                                    {"instruction": "姝ヨ 300 绫冲埌榫欑繑妗ョ珯"},
+                                    {"instruction": "涔樺潗 鍦伴搧1鍙风嚎锛屼粠榫欑繑妗ョ珯鍒板畾瀹夎矾绔欙紝缁忚繃 2 绔?},
                                 ],
                             },
                             {
                                 "segment_no": 2,
-                                "origin": "河坊街",
-                                "destination": "南宋御街",
-                                "duration_text": "12分钟",
+                                "origin": "娌冲潑琛?,
+                                "destination": "鍗楀畫寰¤",
+                                "duration_text": "12鍒嗛挓",
                                 "steps": [
-                                    {"instruction": "步行 800 米到南宋御街"},
+                                    {"instruction": "姝ヨ 800 绫冲埌鍗楀畫寰¤"},
                                 ],
                             },
                         ],
@@ -581,14 +581,14 @@ class WorkspaceStateServiceTests(unittest.TestCase):
         self.assertEqual("evening", items_by_day[0][1]["time_period"])
         self.assertEqual("morning", items_by_day[0][2]["time_period"])
         self.assertEqual("morning", items_by_day[0][3]["time_period"])
-        self.assertEqual("西湖", items_by_day[0][3]["from"])
+        self.assertEqual("瑗挎箹", items_by_day[0][3]["from"])
         day_payloads = TripService._build_itinerary_days_payload(
             structured_context=structured_context,
             total_days=2,
         )
-        self.assertEqual("当日景点动线：西湖 -> 河坊街", day_payloads[0]["summary"])
-        self.assertEqual("当日景点动线：河坊街 -> 南宋御街", day_payloads[1]["summary"])
-        self.assertEqual("河坊街", items_by_day[1][0]["from"])
+        self.assertEqual("褰撴棩鏅偣鍔ㄧ嚎锛氳タ婀?-> 娌冲潑琛?, day_payloads[0]["summary"])
+        self.assertEqual("褰撴棩鏅偣鍔ㄧ嚎锛氭渤鍧婅 -> 鍗楀畫寰¤", day_payloads[1]["summary"])
+        self.assertEqual("娌冲潑琛?, items_by_day[1][0]["from"])
         self.assertEqual("morning", items_by_day[1][0]["time_period"])
         self.assertEqual("food_recommendations", items_by_day[1][1]["type"])
         self.assertEqual("afternoon", items_by_day[1][1]["time_period"])

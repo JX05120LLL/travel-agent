@@ -2,9 +2,9 @@ import json
 
 import pytest
 
-from services.errors import ServiceIntegrationError
-from services.external_call_guard import external_call_guard
-from services.train_12306_service import (
+from services.core.errors import ServiceIntegrationError
+from services.core.external_call_guard import external_call_guard
+from services.providers.train_12306_service import (
     RailTripResult,
     MCP12306Provider,
     OfficialPurchaseNotice,
@@ -65,20 +65,20 @@ class _FakeClient:
             if tool_name == "query-tickets":
                 payload = {
                     "success": True,
-                    "from_station": "上海",
-                    "to_station": "杭州",
+                    "from_station": "涓婃捣",
+                    "to_station": "鏉窞",
                     "train_date": "2026-05-01",
                     "count": 1,
                     "trains": [
                         {
                             "train_no": "G1234",
-                            "from_station": "上海虹桥",
-                            "to_station": "杭州东",
+                            "from_station": "涓婃捣铏规ˉ",
+                            "to_station": "鏉窞涓?,
                             "start_time": "08:00",
                             "arrive_time": "09:01",
                             "duration": "01:01",
                             "seats": {
-                                "second_class": "有",
+                                "second_class": "鏈?,
                                 "first_class": "5",
                             },
                         }
@@ -101,8 +101,8 @@ class _FakeClient:
                         {
                             "train_code": "G1234",
                             "prices": {
-                                "二等座": "73.0",
-                                "一等座": "117.0",
+                                "浜岀瓑搴?: "73.0",
+                                "涓€绛夊骇": "117.0",
                             },
                         }
                     ],
@@ -155,15 +155,15 @@ def test_mcp_provider_search_trips_parses_candidates_and_prices(monkeypatch):
     provider = MCP12306Provider()
 
     result = provider.search_trips(
-        RailTripQuery(origin_city="上海", destination_city="杭州", depart_date="2026-05-01")
+        RailTripQuery(origin_city="涓婃捣", destination_city="鏉窞", depart_date="2026-05-01")
     ).to_dict()
 
     assert result["provider"] == "mcp12306"
     assert result["candidates"][0]["train_no"] == "G1234"
-    assert result["candidates"][0]["depart_station"] == "上海虹桥"
-    assert result["candidates"][0]["arrive_station"] == "杭州东"
-    assert "二等座73.0元" in (result["candidates"][0]["price_text"] or "")
-    assert "second_class:有" in (result["candidates"][0]["availability_text"] or "")
+    assert result["candidates"][0]["depart_station"] == "涓婃捣铏规ˉ"
+    assert result["candidates"][0]["arrive_station"] == "鏉窞涓?
+    assert "浜岀瓑搴?3.0鍏? in (result["candidates"][0]["price_text"] or "")
+    assert "second_class:鏈? in (result["candidates"][0]["availability_text"] or "")
 
 
 def test_mcp_provider_price_failure_does_not_break_ticket_result(monkeypatch):
@@ -173,7 +173,7 @@ def test_mcp_provider_price_failure_does_not_break_ticket_result(monkeypatch):
     provider = MCP12306Provider()
 
     result = provider.search_trips(
-        RailTripQuery(origin_city="上海", destination_city="杭州", depart_date="2026-05-01")
+        RailTripQuery(origin_city="涓婃捣", destination_city="鏉窞", depart_date="2026-05-01")
     ).to_dict()
 
     assert result["candidates"][0]["train_no"] == "G1234"
@@ -203,7 +203,7 @@ def test_mcp_provider_non_json_text_raises_error(monkeypatch):
 
     with pytest.raises(ServiceIntegrationError):
         provider.search_trips(
-            RailTripQuery(origin_city="上海", destination_city="杭州", depart_date="2026-05-01")
+            RailTripQuery(origin_city="涓婃捣", destination_city="鏉窞", depart_date="2026-05-01")
         )
 
 
@@ -220,8 +220,8 @@ def test_train_service_falls_back_to_placeholder_when_upstreams_fail():
 
     service = Train12306Service(providers=[_FailingProvider(), PlaceholderTrain12306Provider()])
     payload = service.plan_arrival(
-        origin_city="上海",
-        destination_city="杭州",
+        origin_city="涓婃捣",
+        destination_city="鏉窞",
         depart_date="2026-05-01",
     )
 
@@ -239,21 +239,21 @@ def test_query_train_tickets_mcp_tool_renders_candidate(monkeypatch):
                 origin_city=query.origin_city,
                 destination_city=query.destination_city,
                 depart_date=query.depart_date,
-                recommended_mode="高铁/动车",
+                recommended_mode="楂橀搧/鍔ㄨ溅",
                 duration_text="00:45",
-                price_text="二等座87.0元",
+                price_text="浜岀瓑搴?7.0鍏?,
                 booking_status="reference_only",
-                summary="建议优先选择 C2353。",
+                summary="寤鸿浼樺厛閫夋嫨 C2353銆?,
                 candidates=[
                     RailTripOption(
                         train_no="C2353",
-                        depart_station="上海虹桥",
-                        arrive_station="杭州东",
+                        depart_station="涓婃捣铏规ˉ",
+                        arrive_station="鏉窞涓?,
                         depart_time="00:06",
                         arrive_time="00:51",
                         duration_text="00:45",
-                        price_text="二等座87.0元",
-                        availability_text="second_class:有",
+                        price_text="浜岀瓑搴?7.0鍏?,
+                        availability_text="second_class:鏈?,
                         data_source="mcp12306",
                     )
                 ],
@@ -267,12 +267,12 @@ def test_query_train_tickets_mcp_tool_renders_candidate(monkeypatch):
     content = _invoke_tool(
         query_train_tickets_mcp_12306,
         {
-            "origin_city": "上海",
-            "destination_city": "杭州",
+            "origin_city": "涓婃捣",
+            "destination_city": "鏉窞",
             "depart_date": "2026-05-01",
         },
     )
 
     assert "C2353" in content
-    assert "上海虹桥 -> 杭州东" in content
-    assert "官方购票提醒" in content
+    assert "涓婃捣铏规ˉ -> 鏉窞涓? in content
+    assert "瀹樻柟璐エ鎻愰啋" in content

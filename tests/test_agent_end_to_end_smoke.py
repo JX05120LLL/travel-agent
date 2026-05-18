@@ -39,14 +39,14 @@ if "httpx" not in sys.modules:
     sys.modules["httpx"] = httpx_module
 
 from db.models import ChatSession
-from services.trip_service import TripService
+from services.travel.trip_service import TripService
 
 
 def build_session() -> ChatSession:
     return ChatSession(
         id=uuid.uuid4(),
         user_id=uuid.uuid4(),
-        title="杭州两天旅行工作区",
+        title="鏉窞涓ゅぉ鏃呰宸ヤ綔鍖?,
         status="active",
     )
 
@@ -68,8 +68,8 @@ class AgentEndToEndSmokeTests(unittest.TestCase):
         session = build_session()
         plan_option = SimpleNamespace(
             id=uuid.uuid4(),
-            title="杭州两天轻松游",
-            primary_destination="杭州",
+            title="鏉窞涓ゅぉ杞绘澗娓?,
+            primary_destination="鏉窞",
             travel_start_date=None,
             travel_end_date=None,
             total_days=2,
@@ -79,8 +79,8 @@ class AgentEndToEndSmokeTests(unittest.TestCase):
             pace=None,
             preferences={},
             constraints={},
-            summary="包含到达方式、酒店、景点串联交通、美食与预算提醒。",
-            plan_markdown="## 杭州两天轻松游\n围绕西湖、河坊街与南宋御街安排两天行程。",
+            summary="鍖呭惈鍒拌揪鏂瑰紡銆侀厭搴椼€佹櫙鐐逛覆鑱斾氦閫氥€佺編椋熶笌棰勭畻鎻愰啋銆?,
+            plan_markdown="## 鏉窞涓ゅぉ杞绘澗娓竆n鍥寸粫瑗挎箹銆佹渤鍧婅涓庡崡瀹嬪尽琛楀畨鎺掍袱澶╄绋嬨€?,
             destinations=[],
             is_selected=False,
             status="draft",
@@ -90,184 +90,184 @@ class AgentEndToEndSmokeTests(unittest.TestCase):
             id=uuid.uuid4(),
             content="\n".join(
                 [
-                    "## 推荐方案",
-                    "### 预算汇总",
-                    "- 人均约 1500-1900 元，含往返高铁、酒店与市内通勤",
-                    "- 酒店建议控制在 500-700 元/晚",
-                    "### 注意事项",
-                    "- 西湖与河坊街节假日人流较大，建议上午优先安排户外景点",
-                    "- 夜间返酒店尽量避开地铁末班车前高峰",
-                    "### 本次假设",
-                    "- 默认从上海出发，游玩 2 天 1 晚",
-                    "- 默认更偏轻松节奏，优先步行与地铁接驳",
+                    "## 鎺ㄨ崘鏂规",
+                    "### 棰勭畻姹囨€?,
+                    "- 浜哄潎绾?1500-1900 鍏冿紝鍚線杩旈珮閾併€侀厭搴椾笌甯傚唴閫氬嫟",
+                    "- 閰掑簵寤鸿鎺у埗鍦?500-700 鍏?鏅?,
+                    "### 娉ㄦ剰浜嬮」",
+                    "- 瑗挎箹涓庢渤鍧婅鑺傚亣鏃ヤ汉娴佽緝澶э紝寤鸿涓婂崍浼樺厛瀹夋帓鎴峰鏅偣",
+                    "- 澶滈棿杩旈厭搴楀敖閲忛伩寮€鍦伴搧鏈彮杞﹀墠楂樺嘲",
+                    "### 鏈鍋囪",
+                    "- 榛樿浠庝笂娴峰嚭鍙戯紝娓哥帺 2 澶?1 鏅?,
+                    "- 榛樿鏇村亸杞绘澗鑺傚锛屼紭鍏堟琛屼笌鍦伴搧鎺ラ┏",
                 ]
             ),
             message_metadata={
                 "tool_outputs": [
                     "\n".join(
                         [
-                            "## 跨城到达建议（12306）",
-                            "- 出发城市：上海",
-                            "- 目的城市：杭州",
-                            "- 出发日期：2026-05-01",
-                            "- 推荐方式：高铁/动车（待确认车次）",
-                            "- 预计耗时：1小时08分钟",
-                            "- 票价参考：73 元起",
-                            "- 接入状态：placeholder",
-                            "- 票务状态：reference",
-                            "- 数据来源：placeholder",
-                            "- 方案摘要：建议优先高铁到达杭州东站，再换乘地铁前往西湖片区酒店。",
+                            "## 璺ㄥ煄鍒拌揪寤鸿锛?2306锛?,
+                            "- 鍑哄彂鍩庡競锛氫笂娴?,
+                            "- 鐩殑鍩庡競锛氭澀宸?,
+                            "- 鍑哄彂鏃ユ湡锛?026-05-01",
+                            "- 鎺ㄨ崘鏂瑰紡锛氶珮閾?鍔ㄨ溅锛堝緟纭杞︽锛?,
+                            "- 棰勮鑰楁椂锛?灏忔椂08鍒嗛挓",
+                            "- 绁ㄤ环鍙傝€冿細73 鍏冭捣",
+                            "- 鎺ュ叆鐘舵€侊細placeholder",
+                            "- 绁ㄥ姟鐘舵€侊細reference",
+                            "- 鏁版嵁鏉ユ簮锛歱laceholder",
+                            "- 鏂规鎽樿锛氬缓璁紭鍏堥珮閾佸埌杈炬澀宸炰笢绔欙紝鍐嶆崲涔樺湴閾佸墠寰€瑗挎箹鐗囧尯閰掑簵銆?,
                             "",
-                            "### 推荐车次",
+                            "### 鎺ㄨ崘杞︽",
                             "1. G7311",
-                            "   - 站点：上海虹桥 -> 杭州东",
-                            "   - 信息：07:00｜08:08｜1小时08分钟｜73 元起",
+                            "   - 绔欑偣锛氫笂娴疯櫣妗?-> 鏉窞涓?,
+                            "   - 淇℃伅锛?7:00锝?8:08锝?灏忔椂08鍒嗛挓锝?3 鍏冭捣",
                             "",
-                            "### 官方购票提醒",
-                            "- 渠道：铁路12306官方",
-                            "- 官网：https://www.12306.cn/",
-                            "- App：https://kyfw.12306.cn/otn/appDownload/init",
-                            "- 提醒：车次、票价、余票与购票规则请以铁路12306官网/App为准。",
+                            "### 瀹樻柟璐エ鎻愰啋",
+                            "- 娓犻亾锛氶搧璺?2306瀹樻柟",
+                            "- 瀹樼綉锛歨ttps://www.12306.cn/",
+                            "- App锛歨ttps://kyfw.12306.cn/otn/appDownload/init",
+                            "- 鎻愰啋锛氳溅娆°€佺エ浠枫€佷綑绁ㄤ笌璐エ瑙勫垯璇蜂互閾佽矾12306瀹樼綉/App涓哄噯銆?,
                             "",
-                            "### 补充说明",
-                            "- 当前车次仅作查询参考，请前往铁路12306官方完成购票。",
+                            "### 琛ュ厖璇存槑",
+                            "- 褰撳墠杞︽浠呬綔鏌ヨ鍙傝€冿紝璇峰墠寰€閾佽矾12306瀹樻柟瀹屾垚璐エ銆?,
                         ]
                     ),
                     "\n".join(
                         [
-                            "## 路线规划",
-                            "- 起点：杭州东站",
-                            "- 终点：西湖",
-                            "- 出行方式：公交/地铁",
-                            "- 城市：杭州",
-                            "距离：8.2 km",
-                            "预计耗时：24分钟",
-                            "总步行距离：450 米",
-                            "票价参考：3 元",
+                            "## 璺嚎瑙勫垝",
+                            "- 璧风偣锛氭澀宸炰笢绔?,
+                            "- 缁堢偣锛氳タ婀?,
+                            "- 鍑鸿鏂瑰紡锛氬叕浜?鍦伴搧",
+                            "- 鍩庡競锛氭澀宸?,
+                            "璺濈锛?.2 km",
+                            "棰勮鑰楁椂锛?4鍒嗛挓",
+                            "鎬绘琛岃窛绂伙細450 绫?,
+                            "绁ㄤ环鍙傝€冿細3 鍏?,
                             "",
-                            "### 逐步换乘",
-                            "1. 步行 300 米到龙翔桥站",
-                            "   - 类型：步行",
-                            "   - 距离：300 米",
-                            "   - 到达点：龙翔桥站",
-                            "2. 乘坐 地铁1号线，从龙翔桥站到定安路站，经过 2 站",
-                            "   - 类型：地铁",
-                            "   - 线路：地铁1号线",
-                            "   - 上车站：龙翔桥站",
-                            "   - 下车站：定安路站",
-                            "   - 站数：2",
+                            "### 閫愭鎹箻",
+                            "1. 姝ヨ 300 绫冲埌榫欑繑妗ョ珯",
+                            "   - 绫诲瀷锛氭琛?,
+                            "   - 璺濈锛?00 绫?,
+                            "   - 鍒拌揪鐐癸細榫欑繑妗ョ珯",
+                            "2. 涔樺潗 鍦伴搧1鍙风嚎锛屼粠榫欑繑妗ョ珯鍒板畾瀹夎矾绔欙紝缁忚繃 2 绔?,
+                            "   - 绫诲瀷锛氬湴閾?,
+                            "   - 绾胯矾锛氬湴閾?鍙风嚎",
+                            "   - 涓婅溅绔欙細榫欑繑妗ョ珯",
+                            "   - 涓嬭溅绔欙細瀹氬畨璺珯",
+                            "   - 绔欐暟锛?",
                         ]
                     ),
                     "\n".join(
                         [
-                            "## 住宿推荐（酒店/民宿）",
-                            "- 中心点：西湖",
-                            "- 搜索半径：5000 米",
-                            "- 筛选后数量：2/4",
-                            "- 筛选条件：预算≤700 元，评分≥4.5，距离≤3000 米",
+                            "## 浣忓鎺ㄨ崘锛堥厭搴?姘戝锛?,
+                            "- 涓績鐐癸細瑗挎箹",
+                            "- 鎼滅储鍗婂緞锛?000 绫?,
+                            "- 绛涢€夊悗鏁伴噺锛?/4",
+                            "- 绛涢€夋潯浠讹細棰勭畻鈮?00 鍏冿紝璇勫垎鈮?.5锛岃窛绂烩墹3000 绫?,
                             "",
-                            "### 推荐列表",
-                            "1. **湖畔酒店**（酒店）",
-                            "   距离：900 m｜评分：4.8｜人均：580 元",
-                            "   地址：西湖大道 1 号｜电话：0571-12345678",
-                            "   价格来源：最低价",
+                            "### 鎺ㄨ崘鍒楄〃",
+                            "1. **婀栫晹閰掑簵**锛堥厭搴楋級",
+                            "   璺濈锛?00 m锝滆瘎鍒嗭細4.8锝滀汉鍧囷細580 鍏?,
+                            "   鍦板潃锛氳タ婀栧ぇ閬?1 鍙凤綔鐢佃瘽锛?571-12345678",
+                            "   浠锋牸鏉ユ簮锛氭渶浣庝环",
                         ]
                     ),
                     "\n".join(
                         [
-                            "## 酒店民宿推荐（供应商聚合）",
-                            "- 目的地：杭州",
-                            "- 中心点：西湖",
-                            "- 搜索半径：5000 米",
-                            "- 推荐来源：amap_fallback",
-                            "- 价格状态：reference",
-                            "- 入住日期：2026-05-01",
-                            "- 离店日期：2026-05-02",
+                            "## 閰掑簵姘戝鎺ㄨ崘锛堜緵搴斿晢鑱氬悎锛?,
+                            "- 鐩殑鍦帮細鏉窞",
+                            "- 涓績鐐癸細瑗挎箹",
+                            "- 鎼滅储鍗婂緞锛?000 绫?,
+                            "- 鎺ㄨ崘鏉ユ簮锛歛map_fallback",
+                            "- 浠锋牸鐘舵€侊細reference",
+                            "- 鍏ヤ綇鏃ユ湡锛?026-05-01",
+                            "- 绂诲簵鏃ユ湡锛?026-05-02",
                             "",
-                            "### 推荐列表",
-                            "1. **湖畔酒店**（酒店）",
-                            "   - 片区：西湖",
-                            "   - 距离：900 m",
-                            "   - 评分：4.8",
-                            "   - 价格：580 元/晚起",
-                            "   - 价格来源：amap_cost",
-                            "   - 是否实时价：否",
-                            "   - 地址：西湖大道 1 号",
-                            "   - 供应商：amap",
+                            "### 鎺ㄨ崘鍒楄〃",
+                            "1. **婀栫晹閰掑簵**锛堥厭搴楋級",
+                            "   - 鐗囧尯锛氳タ婀?,
+                            "   - 璺濈锛?00 m",
+                            "   - 璇勫垎锛?.8",
+                            "   - 浠锋牸锛?80 鍏?鏅氳捣",
+                            "   - 浠锋牸鏉ユ簮锛歛map_cost",
+                            "   - 鏄惁瀹炴椂浠凤細鍚?,
+                            "   - 鍦板潃锛氳タ婀栧ぇ閬?1 鍙?,
+                            "   - 渚涘簲鍟嗭細amap",
                             "",
-                            "### 预订提醒",
-                            "- 价格与房态请以下单页为准。",
+                            "### 棰勮鎻愰啋",
+                            "- 浠锋牸涓庢埧鎬佽浠ヤ笅鍗曢〉涓哄噯銆?,
                         ]
                     ),
                     "\n".join(
                         [
-                            "## 高德地图预览",
-                            "MAP_PREVIEW_JSON: {\"provider_mode\":\"mcp\",\"title\":\"杭州两日路线图\",\"city\":\"杭州\",\"center\":\"120.143222,30.236064\",\"markers\":[{\"name\":\"杭州东站\",\"location\":\"120.219375,30.291225\"},{\"name\":\"西湖\",\"location\":\"120.143222,30.236064\"}],\"personal_map_url\":\"https://example.com/personal-map\",\"official_map_url\":\"https://uri.amap.com/marker?position=120.143222,30.236064\",\"navigation_url\":\"https://uri.amap.com/navigation?from=foo&to=bar\"}",
+                            "## 楂樺痉鍦板浘棰勮",
+                            "MAP_PREVIEW_JSON: {\"provider_mode\":\"mcp\",\"title\":\"鏉窞涓ゆ棩璺嚎鍥綷",\"city\":\"鏉窞\",\"center\":\"120.143222,30.236064\",\"markers\":[{\"name\":\"鏉窞涓滅珯\",\"location\":\"120.219375,30.291225\"},{\"name\":\"瑗挎箹\",\"location\":\"120.143222,30.236064\"}],\"personal_map_url\":\"https://example.com/personal-map\",\"official_map_url\":\"https://uri.amap.com/marker?position=120.143222,30.236064\",\"navigation_url\":\"https://uri.amap.com/navigation?from=foo&to=bar\"}",
                         ]
                     ),
                     "\n".join(
                         [
-                            "## 周边美食推荐",
-                            "- 中心点：河坊街",
-                            "- 搜索半径：3000 米",
-                            "- 命中总数：2",
+                            "## 鍛ㄨ竟缇庨鎺ㄨ崘",
+                            "- 涓績鐐癸細娌冲潑琛?,
+                            "- 鎼滅储鍗婂緞锛?000 绫?,
+                            "- 鍛戒腑鎬绘暟锛?",
                             "",
-                            "### 推荐列表",
-                            "1. **知味观**（杭帮菜）",
-                            "   距离：300 m｜地址：河坊街 88 号",
-                            "2. **新白鹿**（家常菜）",
-                            "   距离：650 m｜地址：南宋御街 19 号",
+                            "### 鎺ㄨ崘鍒楄〃",
+                            "1. **鐭ュ懗瑙?*锛堟澀甯彍锛?,
+                            "   璺濈锛?00 m锝滃湴鍧€锛氭渤鍧婅 88 鍙?,
+                            "2. **鏂扮櫧楣?*锛堝甯歌彍锛?,
+                            "   璺濈锛?50 m锝滃湴鍧€锛氬崡瀹嬪尽琛?19 鍙?,
                         ]
                     ),
                     "\n".join(
                         [
-                            "## 景点串联路线",
-                            "- 城市：杭州",
-                            "- 出行方式：公交/地铁",
-                            "- 景点顺序：西湖 -> 河坊街 -> 南宋御街",
-                            "- 原始顺序：西湖 -> 南宋御街 -> 河坊街",
-                            "- 自动顺序优化：已启用（固定首点：西湖）",
+                            "## 鏅偣涓茶仈璺嚎",
+                            "- 鍩庡競锛氭澀宸?,
+                            "- 鍑鸿鏂瑰紡锛氬叕浜?鍦伴搧",
+                            "- 鏅偣椤哄簭锛氳タ婀?-> 娌冲潑琛?-> 鍗楀畫寰¤",
+                            "- 鍘熷椤哄簭锛氳タ婀?-> 鍗楀畫寰¤ -> 娌冲潑琛?,
+                            "- 鑷姩椤哄簭浼樺寲锛氬凡鍚敤锛堝浐瀹氶鐐癸細瑗挎箹锛?,
                             "",
-                            "### 分段明细",
-                            "| 段落 | 起点 | 终点 | 距离 | 耗时 |",
+                            "### 鍒嗘鏄庣粏",
+                            "| 娈佃惤 | 璧风偣 | 缁堢偣 | 璺濈 | 鑰楁椂 |",
                             "| --- | --- | --- | --- | --- |",
-                            "| 1 | 西湖 | 河坊街 | 2.3 km | 24分钟 |",
-                            "| 2 | 河坊街 | 南宋御街 | 800 m | 12分钟 |",
+                            "| 1 | 瑗挎箹 | 娌冲潑琛?| 2.3 km | 24鍒嗛挓 |",
+                            "| 2 | 娌冲潑琛?| 鍗楀畫寰¤ | 800 m | 12鍒嗛挓 |",
                             "",
-                            "### 第 1 段：西湖 -> 河坊街",
-                            "- 出行方式：公交/地铁",
-                            "- 距离：2.3 km",
-                            "- 耗时：24分钟",
-                            "- 票价参考：3 元",
-                            "- 总步行距离：450 米",
-                            "1. 步行 300 米到龙翔桥站",
-                            "   - 类型：步行",
-                            "   - 距离：300 米",
-                            "   - 到达点：龙翔桥站",
-                            "2. 乘坐 地铁1号线，从龙翔桥站到定安路站，经过 2 站",
-                            "   - 类型：地铁",
-                            "   - 线路：地铁1号线",
-                            "   - 上车站：龙翔桥站",
-                            "   - 下车站：定安路站",
-                            "   - 站数：2",
-                            "3. 步行 150 米到河坊街",
-                            "   - 类型：步行",
-                            "   - 距离：150 米",
-                            "   - 到达点：河坊街",
+                            "### 绗?1 娈碉細瑗挎箹 -> 娌冲潑琛?,
+                            "- 鍑鸿鏂瑰紡锛氬叕浜?鍦伴搧",
+                            "- 璺濈锛?.3 km",
+                            "- 鑰楁椂锛?4鍒嗛挓",
+                            "- 绁ㄤ环鍙傝€冿細3 鍏?,
+                            "- 鎬绘琛岃窛绂伙細450 绫?,
+                            "1. 姝ヨ 300 绫冲埌榫欑繑妗ョ珯",
+                            "   - 绫诲瀷锛氭琛?,
+                            "   - 璺濈锛?00 绫?,
+                            "   - 鍒拌揪鐐癸細榫欑繑妗ョ珯",
+                            "2. 涔樺潗 鍦伴搧1鍙风嚎锛屼粠榫欑繑妗ョ珯鍒板畾瀹夎矾绔欙紝缁忚繃 2 绔?,
+                            "   - 绫诲瀷锛氬湴閾?,
+                            "   - 绾胯矾锛氬湴閾?鍙风嚎",
+                            "   - 涓婅溅绔欙細榫欑繑妗ョ珯",
+                            "   - 涓嬭溅绔欙細瀹氬畨璺珯",
+                            "   - 绔欐暟锛?",
+                            "3. 姝ヨ 150 绫冲埌娌冲潑琛?,
+                            "   - 绫诲瀷锛氭琛?,
+                            "   - 璺濈锛?50 绫?,
+                            "   - 鍒拌揪鐐癸細娌冲潑琛?,
                             "",
-                            "### 第 2 段：河坊街 -> 南宋御街",
-                            "- 出行方式：步行",
-                            "- 距离：800 m",
-                            "- 耗时：12分钟",
-                            "1. 步行 800 米到南宋御街",
-                            "   - 类型：步行",
-                            "   - 距离：800 米",
-                            "   - 到达点：南宋御街",
+                            "### 绗?2 娈碉細娌冲潑琛?-> 鍗楀畫寰¤",
+                            "- 鍑鸿鏂瑰紡锛氭琛?,
+                            "- 璺濈锛?00 m",
+                            "- 鑰楁椂锛?2鍒嗛挓",
+                            "1. 姝ヨ 800 绫冲埌鍗楀畫寰¤",
+                            "   - 绫诲瀷锛氭琛?,
+                            "   - 璺濈锛?00 绫?,
+                            "   - 鍒拌揪鐐癸細鍗楀畫寰¤",
                             "",
-                            "### 总体估算",
-                            "- 总距离：3.1 km",
-                            "- 总耗时：36分钟",
-                            "- 说明：这是分段通勤总和，未包含景点停留时间。",
+                            "### 鎬讳綋浼扮畻",
+                            "- 鎬昏窛绂伙細3.1 km",
+                            "- 鎬昏€楁椂锛?6鍒嗛挓",
+                            "- 璇存槑锛氳繖鏄垎娈甸€氬嫟鎬诲拰锛屾湭鍖呭惈鏅偣鍋滅暀鏃堕棿銆?,
                         ]
                     ),
                 ]
@@ -315,22 +315,22 @@ class AgentEndToEndSmokeTests(unittest.TestCase):
         self.assertIn("delivery_payload", trip.constraints)
         self.assertIn("document_markdown", trip.constraints)
         self.assertIn("price_confidence_summary", trip.constraints)
-        self.assertEqual("杭州两日路线图", trip.constraints["delivery_payload"]["map_preview"]["title"])
+        self.assertEqual("鏉窞涓ゆ棩璺嚎鍥?, trip.constraints["delivery_payload"]["map_preview"]["title"])
 
         amap_cards = [card["type"] for card in structured_context["amap"]["cards"]]
         self.assertIn("stay_recommendations", amap_cards)
         self.assertIn("food_recommendations", amap_cards)
         self.assertIn("spot_route", amap_cards)
         self.assertIn("map_preview", amap_cards)
-        self.assertEqual("最低价", structured_context["amap"]["stays"][0]["items"][0]["price_source"])
+        self.assertEqual("鏈€浣庝环", structured_context["amap"]["stays"][0]["items"][0]["price_source"])
 
         railway_arrival = structured_context["railway12306"]["arrivals"][0]
-        self.assertEqual("上海", railway_arrival["origin_city"])
-        self.assertEqual("杭州", railway_arrival["destination_city"])
-        self.assertEqual("铁路12306官方", railway_arrival["official_notice"]["渠道"])
+        self.assertEqual("涓婃捣", railway_arrival["origin_city"])
+        self.assertEqual("鏉窞", railway_arrival["destination_city"])
+        self.assertEqual("閾佽矾12306瀹樻柟", railway_arrival["official_notice"]["娓犻亾"])
 
         hotel_search = structured_context["hotel_accommodation"]["searches"][0]
-        self.assertEqual("杭州", hotel_search["destination"])
+        self.assertEqual("鏉窞", hotel_search["destination"])
         self.assertEqual("reference", hotel_search["price_status"])
 
         assistant_plan = structured_context["assistant_plan"]
@@ -355,9 +355,9 @@ class AgentEndToEndSmokeTests(unittest.TestCase):
         transit_items = [item for item in captured_days[0].items if item.get("type") == "transit"]
         self.assertTrue(any(item.get("step_details") for item in transit_items))
         self.assertTrue(any(item.get("route_kind") == "spot_leg" for item in transit_items))
-        self.assertIn("酒店推荐", trip.constraints["document_markdown"])
-        self.assertIn("到达方式", trip.constraints["document_markdown"])
-        self.assertIn("Day 0 到达日", trip.constraints["document_markdown"])
+        self.assertIn("閰掑簵鎺ㄨ崘", trip.constraints["document_markdown"])
+        self.assertIn("鍒拌揪鏂瑰紡", trip.constraints["document_markdown"])
+        self.assertIn("Day 0 鍒拌揪鏃?, trip.constraints["document_markdown"])
         self.assertEqual("arrival", trip.constraints["delivery_payload"]["daily_itinerary"][0]["day_type"])
         self.assertEqual("reference", trip.constraints["price_confidence_summary"]["hotel_price_status"])
         create_session_event.assert_called()

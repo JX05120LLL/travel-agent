@@ -1,4 +1,4 @@
-﻿"""高德 Web API 客户端。"""
+"""高德 Web API 客户端。"""
 
 from __future__ import annotations
 
@@ -10,8 +10,8 @@ from typing import Any
 import httpx
 from dotenv import load_dotenv
 
-from services.errors import ServiceConfigError, ServiceIntegrationError
-from services.external_call_guard import ExternalCallPolicy, external_call_guard
+from services.core.errors import ServiceConfigError, ServiceIntegrationError
+from services.core.external_call_guard import ExternalCallPolicy, external_call_guard
 
 load_dotenv()
 
@@ -28,7 +28,7 @@ def _compact_params(params: dict[str, Any]) -> dict[str, Any]:
 class AmapClient:
     api_key: str
     base_url: str = "https://restapi.amap.com/v3"
-    timeout_seconds: float = 10.0
+    timeout_seconds: float = 45.0
 
     @classmethod
     def from_env(cls) -> "AmapClient":
@@ -41,7 +41,8 @@ class AmapClient:
             raise ServiceConfigError(
                 "未配置高德 API Key，请在 .env 中设置 AMAP_API_KEY。"
             )
-        return cls(api_key=api_key)
+        timeout_seconds = float(os.getenv("AMAP_TIMEOUT_SECONDS", "45") or "45")
+        return cls(api_key=api_key, timeout_seconds=timeout_seconds)
 
     def _request(self, path: str, *, params: dict[str, Any]) -> dict[str, Any]:
         request_params = _compact_params(
